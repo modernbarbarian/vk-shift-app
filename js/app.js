@@ -57,6 +57,7 @@ function getMonday(d) {
   x.setDate(x.getDate() + off);
   return x;
 }
+
 function escapeHtml(t) { const d = document.createElement('div'); d.textContent = t; return d.innerHTML; }
 
 /* ---------- Сотрудники ---------- */
@@ -70,9 +71,11 @@ function renderEmployeeDatalist() {
     list.appendChild(o);
   });
 }
+
 function getEmployeeByName(name) {
   return state.employees.find(e => e.name === name) || null;
 }
+
 function addEmployee(name, vkId = null) {
   const existing = getEmployeeByName(name);
   if (existing) return existing;
@@ -96,6 +99,7 @@ async function loadVKFriends() {
     hint.textContent = 'Не удалось загрузить друзей — добавьте сотрудника вручную';
   }
 }
+
 function openEmployeePicker(friends) {
   const body = $('#modal-body');
   const footer = $('#modal-footer');
@@ -126,6 +130,7 @@ function openModal() {
   $('#overlay').classList.remove('hidden');
   $('#modal').classList.remove('hidden');
 }
+
 function closeModal() {
   $('#overlay').classList.add('hidden');
   $('#modal').classList.add('hidden');
@@ -347,6 +352,7 @@ function icsDT(dateISO, time) {
   const d = new Date(dateISO + 'T' + time + ':00');
   return d.getFullYear() + pad(d.getMonth() + 1) + pad(d.getDate()) + 'T' + pad(d.getHours()) + pad(d.getMinutes()) + pad(d.getSeconds());
 }
+
 function addMinutesICS(dtStr, mins) {
   const d = new Date(
     dtStr.slice(0, 4) + '-' + dtStr.slice(4, 6) + '-' + dtStr.slice(6, 8) +
@@ -355,6 +361,7 @@ function addMinutesICS(dtStr, mins) {
   d.setMinutes(d.getMinutes() + mins);
   return d.getFullYear() + pad(d.getMonth() + 1) + pad(d.getDate()) + 'T' + pad(d.getHours()) + pad(d.getMinutes()) + pad(d.getSeconds());
 }
+
 function downloadICS(shift, empName) {
   const start = icsDT(shift.date, shift.time);
   const end = addMinutesICS(start, Math.round((shift.durationHours || 8) * 60));
