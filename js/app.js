@@ -132,16 +132,21 @@ function renderSchedule() {
   const byDay = {};
   weekShifts.forEach(s => { (byDay[s.date] = byDay[s.date] || []).push(s); });
 
-  const dayNames = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'];
+  const dayNames = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс']; // Порядок от Пн до Вс
+
   for (let i = 0; i < 7; i++) {
     const d = new Date(mon);
     d.setDate(mon.getDate() + i);
     const iso = fmtISO(d);
     const section = document.createElement('div');
     section.className = 'day-section';
+
+    // корректируем индекс дня недели (0 → Пн, 1 → Вт, ..., 6 → Вс)
+    const dayIndex = (d.getDay() + 6) % 7;
     section.innerHTML =
-      '<div class="day-section__head">' + dayNames[d.getDay()] + ', ' + showDate(d) + '</div>' +
+      '<div class="day-section__head">' + dayNames[dayIndex] + ', ' + showDate(d) + '</div>' +
       '<div class="day-section__items"></div>';
+
     const items = section.querySelector('.day-section__items');
 
     (byDay[iso] || []).forEach(s => {
