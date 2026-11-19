@@ -33,15 +33,29 @@ function fmtISO(d) {
 function parseISO(s) {
   const [year, month, day] = s.split('-').map(Number);
   const date = new Date(year, month - 1, day);
-  date.setHours(0, 0, 0, 0);
+  date.setHours(0, 0, 0, 0); // 👈 Важно: сбрасываем время!
   return date;
 }
 
 function showDate(d) {
-  const day = String(d.getDate()).padStart(2, '0');
-  const month = String(d.getMonth() + 1).padStart(2, '0');
-  const year = d.getFullYear();
-  return `${day}.${month}.${year}`;
+  const day = d.getDate().toString().padStart(2, '0');
+  const month = (d.getMonth() + 1).toString().padStart(2, '0');
+  return `${day}.${month}.${d.getFullYear()}`;
+}
+
+function showShort(d) {
+  const day = d.getDate().toString().padStart(2, '0');
+  const month = (d.getMonth() + 1).toString().padStart(2, '0');
+  return `${day}.${month}`;
+}
+
+function getMonday(d) {
+  const x = new Date(d);
+  x.setHours(0, 0, 0, 0);
+  const day = x.getDay();
+  const off = day === 0 ? -6 : 1 - day; // 0 = Вс, 1 = Пн, ..., 6 = Сб → сдвигаем на Пн
+  x.setDate(x.getDate() + off);
+  return x;
 }
 function escapeHtml(t) { const d = document.createElement('div'); d.textContent = t; return d.innerHTML; }
 
@@ -133,21 +147,23 @@ function renderSchedule() {
   const byDay = {};
   weekShifts.forEach(s => { (byDay[s.date] = byDay[s.date] || []).push(s); });
 
-  const dayNames = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс']; // Порядок от Пн до Вс
+  // 👇 Массив дней недели: Пн, Вт, Ср, Чт, Пт, Сб, Вс
+  const dayNames = ['Вс', 'Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб']; // 👈 Порядок getDay()
 
   for (let i = 0; i < 7; i++) {
     const d = new Date(mon);
     d.setDate(mon.getDate() + i);
     const iso = fmtISO(d);
+
+    // 👇 Корректируем индекс дня недели: 1 (Пн) → 1, 0 (Вс) → 6
+    const dayOfWeek = (d.getDay() + 6) % 7;
+    const dayName = dayNames[(d.getDay() + 6) % 7]; // 👈 Теперь Пн = 0, Вс = 6
+
     const section = document.createElement('div');
     section.className = 'day-section';
-
-    // корректируем индекс дня недели (0 → Пн, 1 → Вт, ..., 6 → Вс)
-    const dayIndex = (d.getDay() + 6) % 7;
     section.innerHTML =
-      '<div class="day-section__head">' + dayNames[dayIndex] + ', ' + showDate(d) + '</div>' +
+      '<div class="day-section__head">' + dayName + ', ' + showDate(d) + '</div>' +
       '<div class="day-section__items"></div>';
-
     const items = section.querySelector('.day-section__items');
 
     (byDay[iso] || []).forEach(s => {
@@ -170,7 +186,7 @@ function renderSchedule() {
     list.appendChild(section);
   }
 
-  // чтобы remembered точки подставлялись в datalist
+  // Обновляем datalist для магазинов
   const sl = $('#stores-list');
   sl.innerHTML = '';
   state.stores.forEach(st => {
