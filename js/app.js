@@ -23,24 +23,25 @@ function saveState() {
 }
 
 /* ---------- Даты ---------- */
-function fmtISO(d) { return d.toISOString().slice(0, 10); }
-function parseISO(s) { const p = s.split('-').map(Number); return new Date(p[0], p[1] - 1, p[2]); }
-function showDate(d) { return d.getDate() + '.' + (d.getMonth() + 1) + '.' + d.getFullYear(); }
-function showShort(d) { return d.getDate() + '.' + (d.getMonth() + 1); }
-function showTime(s) { return (s || '').slice(0, 5); }
-function getMonday(d) {
-  const x = new Date(d); x.setHours(0, 0, 0, 0);
-  const day = x.getDay();
-  const off = day === 0 ? -6 : 1 - day;
-  x.setDate(x.getDate() + off);
-  return x;
+function fmtISO(d) {
+  const year = d.getFullYear();
+  const month = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
 }
-function weekBounds(offset) {
-  const today = new Date();
-  const mon = getMonday(today);
-  mon.setDate(mon.getDate() + offset * 7);
-  const sun = new Date(mon); sun.setDate(sun.getDate() + 6);
-  return { mon, sun };
+
+function parseISO(s) {
+  const [year, month, day] = s.split('-').map(Number);
+  const date = new Date(year, month - 1, day);
+  date.setHours(0, 0, 0, 0);
+  return date;
+}
+
+function showDate(d) {
+  const day = String(d.getDate()).padStart(2, '0');
+  const month = String(d.getMonth() + 1).padStart(2, '0');
+  const year = d.getFullYear();
+  return `${day}.${month}.${year}`;
 }
 function escapeHtml(t) { const d = document.createElement('div'); d.textContent = t; return d.innerHTML; }
 
@@ -132,16 +133,21 @@ function renderSchedule() {
   const byDay = {};
   weekShifts.forEach(s => { (byDay[s.date] = byDay[s.date] || []).push(s); });
 
-  const dayNames = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'];
+  const dayNames = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс']; // Порядок от Пн до Вс
+
   for (let i = 0; i < 7; i++) {
     const d = new Date(mon);
     d.setDate(mon.getDate() + i);
     const iso = fmtISO(d);
     const section = document.createElement('div');
     section.className = 'day-section';
+
+    // корректируем индекс дня недели (0 → Пн, 1 → Вт, ..., 6 → Вс)
+    const dayIndex = (d.getDay() + 6) % 7;
     section.innerHTML =
-      '<div class="day-section__head">' + dayNames[d.getDay()] + ', ' + showDate(d) + '</div>' +
+      '<div class="day-section__head">' + dayNames[dayIndex] + ', ' + showDate(d) + '</div>' +
       '<div class="day-section__items"></div>';
+
     const items = section.querySelector('.day-section__items');
 
     (byDay[iso] || []).forEach(s => {
