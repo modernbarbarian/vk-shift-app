@@ -33,15 +33,29 @@ function fmtISO(d) {
 function parseISO(s) {
   const [year, month, day] = s.split('-').map(Number);
   const date = new Date(year, month - 1, day);
-  date.setHours(0, 0, 0, 0);
+  date.setHours(0, 0, 0, 0); // 👈 Важно: сбрасываем время!
   return date;
 }
 
 function showDate(d) {
-  const day = String(d.getDate()).padStart(2, '0');
-  const month = String(d.getMonth() + 1).padStart(2, '0');
-  const year = d.getFullYear();
-  return `${day}.${month}.${year}`;
+  const day = d.getDate().toString().padStart(2, '0');
+  const month = (d.getMonth() + 1).toString().padStart(2, '0');
+  return `${day}.${month}.${d.getFullYear()}`;
+}
+
+function showShort(d) {
+  const day = d.getDate().toString().padStart(2, '0');
+  const month = (d.getMonth() + 1).toString().padStart(2, '0');
+  return `${day}.${month}`;
+}
+
+function getMonday(d) {
+  const x = new Date(d);
+  x.setHours(0, 0, 0, 0);
+  const day = x.getDay();
+  const off = day === 0 ? -6 : 1 - day; // 0 = Вс, 1 = Пн, ..., 6 = Сб → сдвигаем на Пн
+  x.setDate(x.getDate() + off);
+  return x;
 }
 
 /* ---------- Сотрудники ---------- */
