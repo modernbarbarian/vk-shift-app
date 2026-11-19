@@ -18,6 +18,7 @@ function loadState() {
   if (!state.shifts) state.shifts = [];
   if (state.weekOffset === undefined) state.weekOffset = 0;
 }
+
 function saveState() {
   try { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); } catch (e) {}
 }
@@ -33,32 +34,50 @@ function fmtISO(d) {
 function parseISO(s) {
   const [year, month, day] = s.split('-').map(Number);
   const date = new Date(year, month - 1, day);
-  date.setHours(0, 0, 0, 0); // 👈 Важно: сбрасываем время!
+  date.setHours(0, 0, 0, 0);
   return date;
 }
 
 function showDate(d) {
-  const day = d.getDate().toString().padStart(2, '0');
-  const month = (d.getMonth() + 1).toString().padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  const month = String(d.getMonth() + 1).padStart(2, '0');
   return `${day}.${month}.${d.getFullYear()}`;
 }
 
 function showShort(d) {
-  const day = d.getDate().toString().padStart(2, '0');
-  const month = (d.getMonth() + 1).toString().padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  const month = String(d.getMonth() + 1).padStart(2, '0');
   return `${day}.${month}`;
 }
 
+function showTime(s) {
+  return (s || '').slice(0, 5);
+}
+
+// Возвращает понедельник текущей недели
 function getMonday(d) {
   const x = new Date(d);
   x.setHours(0, 0, 0, 0);
-  const day = x.getDay();
-  const off = day === 0 ? -6 : 1 - day; // 0 = Вс, 1 = Пн, ..., 6 = Сб → сдвигаем на Пн
-  x.setDate(x.getDate() + off);
-  return x;
+  const day = x.getDay(); // 0 (Вс) до 6 (Сб)
+  const diff = x.getDate() - day + (day === 0 ? -6 : 1); // Корректировка для понедельника
+  return new Date(x.setDate(diff));
 }
 
-function escapeHtml(t) { const d = document.createElement('div'); d.textContent = t; return d.innerHTML; }
+function weekBounds(offset) {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const mon = getMonday(today);
+  mon.setDate(mon.getDate() + offset * 7);
+  const sun = new Date(mon);
+  sun.setDate(sun.getDate() + 6);
+  return { mon, sun };
+}
+
+function escapeHtml(t) {
+  const d = document.createElement('div');
+  d.textContent = t;
+  return d.innerHTML;
+}
 
 /* ---------- Сотрудники ---------- */
 function renderEmployeeDatalist() {
@@ -79,7 +98,11 @@ function getEmployeeByName(name) {
 function addEmployee(name, vkId = null) {
   const existing = getEmployeeByName(name);
   if (existing) return existing;
-  const e = { id: 'e' + Date.now() + Math.random().toString(36).slice(2, 6), name, vkId };
+  const e = {
+    id: 'e' + Date.now() + Math.random().toString(36).slice(2, 6),
+    name,
+    vkId
+  };
   state.employees.push(e);
   saveState();
   renderEmployeeDatalist();
@@ -89,7 +112,10 @@ function addEmployee(name, vkId = null) {
 /* ---------- ВК: друзья ---------- */
 async function loadVKFriends() {
   const hint = $('#hint-vk-friends');
-  if (!bridge) { hint.textContent = 'VK Bridge недоступен (запустите внутри ВК)'; return; }
+  if (!bridge) {
+    hint.textContent = 'VK Bridge недоступен (запустите внутри ВК)';
+    return;
+  }
   try {
     const res = await bridge.send('VKWebAppGetFriends', { fields: ['first_name', 'last_name', 'photo_100'] });
     const items = (res && res.items) || [];
@@ -144,15 +170,20 @@ function renderSchedule() {
   const list = $('#list-week');
   list.innerHTML = '';
 
+  // Фильтруем смены по текущей неделе
   const weekShifts = state.shifts.filter(s => {
     const d = parseISO(s.date);
     return d >= mon && d <= sun;
   });
 
+  // Группируем смены по датам
   const byDay = {};
-  weekShifts.forEach(s => { (byDay[s.date] = byDay[s.date] || []).push(s); });
+  weekShifts.forEach(s => {
+    if (!byDay[s.date]) byDay[s.date] = [];
+    byDay[s.date].push(s);
+  });
 
-  // Пн, Вт, Ср, Чт, Пт, Сб, Вс
+  // Дни недели в порядке: Пн, Вт, Ср, Чт, Пт, Сб, Вс
   const dayNames = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'];
 
   for (let i = 0; i < 7; i++) {
@@ -160,24 +191,40 @@ function renderSchedule() {
     d.setDate(mon.getDate() + i);
     const iso = fmtISO(d);
 
-    // Теперь просто используем getDay() без корректировки
-    const dayName = dayNames[d.getDay()]; // Пн=1, Вт=2, ..., Вс=0 → но массив начинается с Пн
-
-    // ⚠️ Внимание: getDay() возвращает:
-    // 0 = Вс, 1 = Пн, 2 = Вт, ..., 6 = Сб
-    // Поэтому нужно скорректировать индекс для массива ['Пн', 'Вт', ..., 'Вс']
-    const correctedDayIndex = (d.getDay() + 6) % 7; // Теперь 0 (Вс) → 6, 1 (Пн) → 0, и т.д.
-    const correctDayName = dayNames[correctedDayIndex];
+    // getDay(): 0=Вс, 1=Пн, 2=Вт, ..., 6=Сб
+    // Корректируем индекс: (day + 6) % 7 → 1(Пн)=0, 2(Вт)=1, ..., 0(Вс)=6
+    const dayIndex = (d.getDay() + 6) % 7;
+    const dayName = dayNames[dayIndex];
 
     const section = document.createElement('div');
     section.className = 'day-section';
     section.innerHTML =
-      '<div class="day-section__head">' + correctDayName + ', ' + showDate(d) + '</div>' +
+      '<div class="day-section__head">' + dayName + ', ' + showDate(d) + '</div>' +
       '<div class="day-section__items"></div>';
     const items = section.querySelector('.day-section__items');
 
+    // Добавляем смены на текущий день
     (byDay[iso] || []).forEach(s => {
-      // ... остальной код без изменений ...
+      const emp = state.employees.find(e => e.id === s.employeeId) || { name: s.employeeName || 'Сотрудник' };
+      const item = document.createElement('div');
+      item.className = 'shift-item';
+      item.innerHTML =
+        '<div class="shift-item__info">' +
+        '<div class="shift-item__who">' + escapeHtml(emp.name) + '</div>' +
+        '<div class="shift-item__when">' + showTime(s.time) + ' · ' + (s.durationHours || 0) + ' ч</div>' +
+        '<div class="shift-item__store">' + escapeHtml(s.store || '—') + '</div>' +
+        '</div>' +
+        '<button class="shift-item__del" data-id="' + s.id + '" title="Удалить смену">×</button>' +
+        '<button class="btn-cal" data-id="' + s.id + '" title="Добавить в календарь">📅</button>';
+      item.querySelector('.shift-item__del').onclick = (ev) => {
+        ev.stopPropagation();
+        deleteShift(s.id);
+      };
+      item.querySelector('.btn-cal').onclick = (ev) => {
+        ev.stopPropagation();
+        downloadICSShift(s.id);
+      };
+      items.appendChild(item);
     });
 
     list.appendChild(section);
@@ -330,6 +377,10 @@ function openBroadcast() {
   openModal();
 }
 
+function escapeJs(text) {
+  return text.replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/"/g, '\\"');
+}
+
 function copyText(text) {
   navigator.clipboard.writeText(text).then(() => {
     alert('Текст скопирован в буфер обмена. Отправьте его сотрудникам в личные сообщения ВК.');
@@ -339,7 +390,10 @@ function copyText(text) {
 }
 
 /* ---------- Календарь .ics (iOS + Android) ---------- */
-function pad(n) { return String(n).padStart(2, '0'); }
+function pad(n) {
+  return String(n).padStart(2, '0');
+}
+
 function icsDT(dateISO, time) {
   const d = new Date(dateISO + 'T' + time + ':00');
   return d.getFullYear() + pad(d.getMonth() + 1) + pad(d.getDate()) + 'T' + pad(d.getHours()) + pad(d.getMinutes()) + pad(d.getSeconds());
@@ -410,39 +464,29 @@ document.addEventListener('DOMContentLoaded', () => {
   initVK();
   renderEmployeeDatalist();
 
-  // Дата по умолчанию — сегодня
   $('#inp-date').value = fmtISO(new Date());
 
-  // Вкладки
   $$('[data-tab]').forEach(b => {
     b.onclick = () => { currentTab = b.dataset.tab; navTabs(); };
   });
 
-  // Навигация недель
   $('#btn-prev-week').onclick = () => { state.weekOffset--; saveState(); renderSchedule(); };
   $('#btn-next-week').onclick = () => { state.weekOffset++; saveState(); renderSchedule(); };
 
-  // Друзья ВК
   $('#btn-pick-employee').onclick = loadVKFriends;
 
-  // Форма
   $('#form-shift').onsubmit = handleFormSubmit;
 
-  // Рассылка
   $('#btn-broadcast').onclick = openBroadcast;
 
-  // Кнопка быстрого перехода к форме
   $('#btn-add-shift').onclick = () => {
     $('#form-shift').scrollIntoView({ behavior: 'smooth' });
   };
 
-  // Закрытие модалки
   $('#btn-modal-close').onclick = closeModal;
   $('#overlay').onclick = closeModal;
 
-  // Первичный рендер
   renderSchedule();
 
-  // Экспортируем для использования в HTML-атрибутах onclick
   window.app = { copyText, closeModal, openBroadcast };
 });
