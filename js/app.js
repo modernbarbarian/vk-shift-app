@@ -54,12 +54,11 @@ function showTime(s) {
   return (s || '').slice(0, 5);
 }
 
-// Возвращает понедельник текущей недели
 function getMonday(d) {
   const x = new Date(d);
   x.setHours(0, 0, 0, 0);
-  const day = x.getDay(); // 0 (Вс) до 6 (Сб)
-  const diff = x.getDate() - day + (day === 0 ? -6 : 1); // Корректировка для понедельника
+  const day = x.getDay();
+  const diff = x.getDate() - day + (day === 0 ? -6 : 1);
   return new Date(x.setDate(diff));
 }
 
@@ -77,6 +76,10 @@ function escapeHtml(t) {
   const d = document.createElement('div');
   d.textContent = t;
   return d.innerHTML;
+}
+
+function escapeJs(text) {
+  return text.replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/"/g, '\\"');
 }
 
 /* ---------- Сотрудники ---------- */
@@ -170,29 +173,23 @@ function renderSchedule() {
   const list = $('#list-week');
   list.innerHTML = '';
 
-  // Фильтруем смены по текущей неделе
   const weekShifts = state.shifts.filter(s => {
     const d = parseISO(s.date);
     return d >= mon && d <= sun;
   });
 
-  // Группируем смены по датам
   const byDay = {};
   weekShifts.forEach(s => {
     if (!byDay[s.date]) byDay[s.date] = [];
     byDay[s.date].push(s);
   });
 
-  // Дни недели в порядке: Пн, Вт, Ср, Чт, Пт, Сб, Вс
   const dayNames = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'];
 
   for (let i = 0; i < 7; i++) {
     const d = new Date(mon);
     d.setDate(mon.getDate() + i);
     const iso = fmtISO(d);
-
-    // getDay(): 0=Вс, 1=Пн, 2=Вт, ..., 6=Сб
-    // Корректируем индекс: (day + 6) % 7 → 1(Пн)=0, 2(Вт)=1, ..., 0(Вс)=6
     const dayIndex = (d.getDay() + 6) % 7;
     const dayName = dayNames[dayIndex];
 
@@ -203,8 +200,7 @@ function renderSchedule() {
       '<div class="day-section__items"></div>';
     const items = section.querySelector('.day-section__items');
 
-    // Добавляем смены на текущий день
-    (byDay[iso] || []).forEach(s => {
+    (byDay[iso] || []).sort((a, b) => a.time.localeCompare(b.time)).forEach(s => {
       const emp = state.employees.find(e => e.id === s.employeeId) || { name: s.employeeName || 'Сотрудник' };
       const item = document.createElement('div');
       item.className = 'shift-item';
@@ -216,21 +212,14 @@ function renderSchedule() {
         '</div>' +
         '<button class="shift-item__del" data-id="' + s.id + '" title="Удалить смену">×</button>' +
         '<button class="btn-cal" data-id="' + s.id + '" title="Добавить в календарь">📅</button>';
-      item.querySelector('.shift-item__del').onclick = (ev) => {
-        ev.stopPropagation();
-        deleteShift(s.id);
-      };
-      item.querySelector('.btn-cal').onclick = (ev) => {
-        ev.stopPropagation();
-        downloadICSShift(s.id);
-      };
+      item.querySelector('.shift-item__del').onclick = (ev) => { ev.stopPropagation(); deleteShift(s.id); };
+      item.querySelector('.btn-cal').onclick = (ev) => { ev.stopPropagation(); downloadICSShift(s.id); };
       items.appendChild(item);
     });
 
     list.appendChild(section);
   }
 
-  // Обновляем datalist для магазинов
   const sl = $('#stores-list');
   sl.innerHTML = '';
   state.stores.forEach(st => {
@@ -254,14 +243,13 @@ function downloadICSShift(id) {
   downloadICS(s, emp.name);
 }
 
-/* Форма добавления смены */
 function handleFormSubmit(ev) {
   ev.preventDefault();
   const empName = $('#inp-employee').value.trim();
   const store = $('#inp-store').value.trim();
   const date = $('#inp-date').value;
   const time = $('#inp-time').value;
-  const duration = parseFloat($('#inp-duration').value) || 8;
+  const duration = parseFloat($('#inp-duration').value) || 6;
 
   if (!empName) { alert('Укажите сотрудника'); return; }
   if (!store) { alert('Укажите точку магазина'); return; }
@@ -285,7 +273,7 @@ function handleFormSubmit(ev) {
   saveState();
 
   $('#form-shift').reset();
-  $('#inp-duration').value = 8;
+  $('#inp-duration').value = 6;
   $('#inp-date').value = fmtISO(new Date());
   renderSchedule();
 }
@@ -352,7 +340,7 @@ function openBroadcast() {
   let allText = 'График смен на неделю с ' + showShort(mon) + ' по ' + showShort(sun) + ':\n\n';
 
   Object.values(byEmp).forEach(emp => {
-    const lines = emp.shifts.map(s =>
+    const lines = emp.shifts.sort((a, b) => a.time.localeCompare(b.time)).map(s =>
       '• ' + showDate(parseISO(s.date)) + ' ' + showTime(s.time) + ' — ' + escapeHtml(s.store) + ' (' + (s.durationHours || 0) + ' ч)'
     ).join('\n');
     const text =
@@ -375,10 +363,6 @@ function openBroadcast() {
     '<button class="btn btn--primary btn--full" onclick="app.copyText(\'' + escapeJs(allText) + '\')">Копировать всё (все сотрудники)</button>' +
     '<button class="btn btn--outline btn--full" onclick="closeModal()">Закрыть</button>';
   openModal();
-}
-
-function escapeJs(text) {
-  return text.replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/"/g, '\\"');
 }
 
 function copyText(text) {
@@ -410,7 +394,7 @@ function addMinutesICS(dtStr, mins) {
 
 function downloadICS(shift, empName) {
   const start = icsDT(shift.date, shift.time);
-  const end = addMinutesICS(start, Math.round((shift.durationHours || 8) * 60));
+  const end = addMinutesICS(start, Math.round((shift.durationHours || 6) * 60));
   const ics = [
     'BEGIN:VCALENDAR',
     'VERSION:2.0',
