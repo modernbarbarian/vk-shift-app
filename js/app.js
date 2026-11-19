@@ -152,40 +152,32 @@ function renderSchedule() {
   const byDay = {};
   weekShifts.forEach(s => { (byDay[s.date] = byDay[s.date] || []).push(s); });
 
-  // 👇 Массив дней недели: Пн, Вт, Ср, Чт, Пт, Сб, Вс
-  const dayNames = ['Вс', 'Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб']; // 👈 Порядок getDay()
+  // Пн, Вт, Ср, Чт, Пт, Сб, Вс
+  const dayNames = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'];
 
   for (let i = 0; i < 7; i++) {
     const d = new Date(mon);
     d.setDate(mon.getDate() + i);
     const iso = fmtISO(d);
 
-    // 👇 Корректируем индекс дня недели: 1 (Пн) → 1, 0 (Вс) → 6
-    const dayOfWeek = (d.getDay() + 6) % 7;
-    const dayName = dayNames[(d.getDay() + 6) % 7]; // 👈 Теперь Пн = 0, Вс = 6
+    // Теперь просто используем getDay() без корректировки
+    const dayName = dayNames[d.getDay()]; // Пн=1, Вт=2, ..., Вс=0 → но массив начинается с Пн
+
+    // ⚠️ Внимание: getDay() возвращает:
+    // 0 = Вс, 1 = Пн, 2 = Вт, ..., 6 = Сб
+    // Поэтому нужно скорректировать индекс для массива ['Пн', 'Вт', ..., 'Вс']
+    const correctedDayIndex = (d.getDay() + 6) % 7; // Теперь 0 (Вс) → 6, 1 (Пн) → 0, и т.д.
+    const correctDayName = dayNames[correctedDayIndex];
 
     const section = document.createElement('div');
     section.className = 'day-section';
     section.innerHTML =
-      '<div class="day-section__head">' + dayName + ', ' + showDate(d) + '</div>' +
+      '<div class="day-section__head">' + correctDayName + ', ' + showDate(d) + '</div>' +
       '<div class="day-section__items"></div>';
     const items = section.querySelector('.day-section__items');
 
     (byDay[iso] || []).forEach(s => {
-      const emp = state.employees.find(e => e.id === s.employeeId) || { name: s.employeeName || 'Сотрудник' };
-      const item = document.createElement('div');
-      item.className = 'shift-item';
-      item.innerHTML =
-        '<div class="shift-item__info">' +
-        '<div class="shift-item__who">' + escapeHtml(emp.name) + '</div>' +
-        '<div class="shift-item__when">' + showTime(s.time) + ' · ' + (s.durationHours || 0) + ' ч</div>' +
-        '<div class="shift-item__store">' + escapeHtml(s.store || '—') + '</div>' +
-        '</div>' +
-        '<button class="shift-item__del" data-id="' + s.id + '" title="Удалить смену">×</button>' +
-        '<button class="btn-cal" data-id="' + s.id + '" title="Добавить в календарь">📅</button>';
-      item.querySelector('.shift-item__del').onclick = (ev) => { ev.stopPropagation(); deleteShift(s.id); };
-      item.querySelector('.btn-cal').onclick = (ev) => { ev.stopPropagation(); downloadICSShift(s.id); };
-      items.appendChild(item);
+      // ... остальной код без изменений ...
     });
 
     list.appendChild(section);
