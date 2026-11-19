@@ -200,6 +200,7 @@ function renderSchedule() {
       '<div class="day-section__items"></div>';
     const items = section.querySelector('.day-section__items');
 
+    // Сортировка смен по времени
     (byDay[iso] || []).sort((a, b) => a.time.localeCompare(b.time)).forEach(s => {
       const emp = state.employees.find(e => e.id === s.employeeId) || { name: s.employeeName || 'Сотрудник' };
       const item = document.createElement('div');
@@ -207,7 +208,7 @@ function renderSchedule() {
       item.innerHTML =
         '<div class="shift-item__info">' +
         '<div class="shift-item__who">' + escapeHtml(emp.name) + '</div>' +
-        '<div class="shift-item__when">' + showTime(s.time) + ' · ' + (s.durationHours || 0) + ' ч</div>' +
+        '<div class="shift-item__when">' + showTime(s.time) + ' · ' + (s.durationHours || 6) + ' ч</div>' +
         '<div class="shift-item__store">' + escapeHtml(s.store || '—') + '</div>' +
         '</div>' +
         '<button class="shift-item__del" data-id="' + s.id + '" title="Удалить смену">×</button>' +
@@ -249,7 +250,7 @@ function handleFormSubmit(ev) {
   const store = $('#inp-store').value.trim();
   const date = $('#inp-date').value;
   const time = $('#inp-time').value;
-  const duration = parseFloat($('#inp-duration').value) || 6;
+  const duration = parseFloat($('#inp-duration').value) || 6; // Deafult: 6 часов
 
   if (!empName) { alert('Укажите сотрудника'); return; }
   if (!store) { alert('Укажите точку магазина'); return; }
@@ -273,7 +274,7 @@ function handleFormSubmit(ev) {
   saveState();
 
   $('#form-shift').reset();
-  $('#inp-duration').value = 6;
+  $('#inp-duration').value = 6; // Default: 6 часов
   $('#inp-date').value = fmtISO(new Date());
   renderSchedule();
 }
@@ -341,7 +342,7 @@ function openBroadcast() {
 
   Object.values(byEmp).forEach(emp => {
     const lines = emp.shifts.sort((a, b) => a.time.localeCompare(b.time)).map(s =>
-      '• ' + showDate(parseISO(s.date)) + ' ' + showTime(s.time) + ' — ' + escapeHtml(s.store) + ' (' + (s.durationHours || 0) + ' ч)'
+      '• ' + showDate(parseISO(s.date)) + ' ' + showTime(s.time) + ' — ' + escapeHtml(s.store) + ' (' + (s.durationHours || 6) + ' ч)'
     ).join('\n');
     const text =
       'Здравствуйте, ' + escapeHtml(emp.name) + '!\n' +
@@ -366,11 +367,23 @@ function openBroadcast() {
 }
 
 function copyText(text) {
-  navigator.clipboard.writeText(text).then(() => {
-    alert('Текст скопирован в буфер обмена. Отправьте его сотрудникам в личные сообщения ВК.');
-  }).catch(() => {
-    alert('Не удалось скопировать. Выделите текст вручную.');
-  });
+  if (bridge) {
+    bridge.send('VKWebAppCopyText', { text: text }).then(() => {
+      alert('Текст скопирован в буфер обмена!');
+    }).catch(() => {
+      navigator.clipboard.writeText(text).then(() => {
+        alert('Текст скопирован в буфер обмена.');
+      }).catch(() => {
+        alert('Не удалось скопировать. Выделите текст вручную.');
+      });
+    });
+  } else {
+    navigator.clipboard.writeText(text).then(() => {
+      alert('Текст скопирован в буфер обмена.');
+    }).catch(() => {
+      alert('Не удалось скопировать. Выделите текст вручную.');
+    });
+  }
 }
 
 /* ---------- Календарь .ics (iOS + Android) ---------- */
@@ -430,7 +443,17 @@ function downloadICS(shift, empName) {
 /* ---------- Инициализация ---------- */
 function initVK() {
   if (bridge) {
+    bridge.subscribe((e) => {
+      if (e.detail.type === 'VKWebAppUpdateConfig') {
+        const scheme = e.detail.data.color_scheme;
+        document.documentElement.setAttribute('data-scheme', scheme);
+      }
+    });
     bridge.send('VKWebAppInit').catch(() => {});
+    bridge.send('VKWebAppSetViewSettings', {
+      status_bar_style: 'light',
+      action_bar_color: '#FFFFFF'
+    }).catch(() => {});
   }
 }
 
