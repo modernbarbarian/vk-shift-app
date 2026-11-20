@@ -1,26 +1,96 @@
-const STORAGE_KEY = 'vkshifts_v1';
-const bridge = window.vkBridge;
+import {
+  init as vkInit,
+  getFriends as vkGetFriends,
+  copyText as vkCopyText,
+  downloadFile as vkDownloadFile,
+  storageGet as vkStorageGet,
+  storageSet as vkStorageSet,
+  isVK,
+  isNativeClient
+} from './vk.js';
+
+const STORAGE_KEY = 'vkshifts_v1';      // localStorage (быстро, работает и без ВК)
+const VK_STORAGE_KEY = 'vkshifts_state'; // VK Storage (привязан к пользователю, а не к устройству)
+const STORAGE_SYNC_DELAY = 1500;         // задержка записи в VK Storage после изменений
 
 const $ = (s) => document.querySelector(s);
 const $$ = (s) => Array.from(document.querySelectorAll(s));
 
 let currentTab = 'schedule';
-let state = { employees: [], stores: [], shifts: [], weekOffset: 0 };
+let state = { employees: [], stores: [], shifts: [], weekOffset: 0, updatedAt: 0 };
+let syncTimer = null;
+let lastPushedValue = null;
 
-/* ---------- Хранение (localStorage) ---------- */
+/* ---------- Хранение: localStorage + синхронизация с VK Storage ---------- */
+function normalizeState() {
+  if (!state.employees) state.employees = [];
+  if (!state.stores) state.stores = [];
+  if (!state.shifts) state.shifts = [];
+  if (state.weekOffset === undefined) state.weekOffset = 0;
+  if (typeof state.updatedAt !== 'number') state.updatedAt = 0;
+}
+
 function loadState() {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (raw) state = JSON.parse(raw);
   } catch (e) {}
-  if (!state.employees) state.employees = [];
-  if (!state.stores) state.stores = [];
-  if (!state.shifts) state.shifts = [];
-  if (state.weekOffset === undefined) state.weekOffset = 0;
+  normalizeState();
 }
 
 function saveState() {
+  state.updatedAt = Date.now();
   try { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); } catch (e) {}
+  scheduleVKSync();
+}
+
+/** Отложенная запись в VK Storage: не дёргаем клиент на каждое нажатие. */
+function scheduleVKSync() {
+  if (!isVK()) return;
+  clearTimeout(syncTimer);
+  syncTimer = setTimeout(pushStateToVK, STORAGE_SYNC_DELAY);
+}
+
+async function pushStateToVK() {
+  const value = JSON.stringify(state);
+  if (value === lastPushedValue) return;
+  const ok = await vkStorageSet(VK_STORAGE_KEY, value);
+  if (ok) lastPushedValue = value;
+}
+
+/**
+ * Загрузка состояния из VK Storage при старте.
+ * Конфликт решается по полю updatedAt: чья версия новее, та и побеждает.
+ */
+async function pullStateFromVK() {
+  const raw = await vkStorageGet(VK_STORAGE_KEY);
+  if (!raw) {
+    // Облачного состояния ещё нет — отправляем локальное
+    scheduleVKSync();
+    return;
+  }
+
+  let remote;
+  try { remote = JSON.parse(raw); } catch (e) { return; }
+  if (!remote || !Array.isArray(remote.shifts)) return;
+
+  lastPushedValue = raw;
+
+  if ((remote.updatedAt || 0) > state.updatedAt) {
+    state = remote;
+    normalizeState();
+    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); } catch (e) {}
+    rerenderAll();
+    toast('Данные обновлены из ВК');
+  } else {
+    scheduleVKSync();
+  }
+}
+
+function rerenderAll() {
+  renderEmployeeDatalist();
+  renderSchedule();
+  if (currentTab === 'stats') renderStats();
 }
 
 /* ---------- Даты ---------- */
@@ -78,8 +148,86 @@ function escapeHtml(t) {
   return d.innerHTML;
 }
 
-function escapeJs(text) {
-  return text.replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/"/g, '\\"');
+/* ---------- UI: toast и диалоги (замена alert/confirm) ----------
+   Нативные alert/confirm внутри iframe ВК работают некорректно,
+   поэтому весь вывод идёт через наше модальное окно. */
+let toastTimer = null;
+
+function toast(message) {
+  const el = $('#toast');
+  if (!el) return;
+  el.textContent = message;
+  el.classList.add('toast--show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => el.classList.remove('toast--show'), 2600);
+}
+
+let dialogResolver = null;
+
+function clearDialog() {
+  if (!dialogResolver) return;
+  const resolve = dialogResolver;
+  dialogResolver = null;
+  resolve(null);
+}
+
+/**
+ * Модальное окно с кнопками.
+ * @param {{title?: string, text?: string, extra?: HTMLElement, buttons?: Array<{label: string, primary?: boolean, value?: any}>}} opts
+ * @returns {Promise<any>} значение нажатой кнопки или null, если окно закрыли
+ */
+function showDialog(opts) {
+  clearDialog();
+
+  const { title = '', text = '', extra = null, buttons = [] } = opts;
+
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = (value) => {
+      if (settled) return;
+      settled = true;
+      if (dialogResolver === finish) dialogResolver = null;
+      closeModal();
+      resolve(value);
+    };
+    dialogResolver = finish;
+
+    $('#modal-title').textContent = title;
+
+    const body = $('#modal-body');
+    body.innerHTML = '';
+    if (text) {
+      const p = document.createElement('div');
+      p.className = 'dialog-text';
+      p.textContent = text;
+      body.appendChild(p);
+    }
+    if (extra) body.appendChild(extra);
+
+    const footer = $('#modal-footer');
+    footer.innerHTML = '';
+
+    buttons.forEach((b) => {
+      const btn = document.createElement('button');
+      btn.className = 'btn ' + (b.primary ? 'btn--primary' : 'btn--outline') + ' btn--full';
+      btn.textContent = b.label;
+      btn.onclick = () => finish(b.value);
+      footer.appendChild(btn);
+    });
+
+    openModal();
+  });
+}
+
+function confirmDialog(text, okLabel = 'Да') {
+  return showDialog({
+    title: 'Подтверждение',
+    text,
+    buttons: [
+      { label: 'Отмена', value: false },
+      { label: okLabel, primary: true, value: true }
+    ]
+  });
 }
 
 /* ---------- Сотрудники ---------- */
@@ -115,21 +263,25 @@ function addEmployee(name, vkId = null) {
 /* ---------- ВК: друзья ---------- */
 async function loadVKFriends() {
   const hint = $('#hint-vk-friends');
-  if (!bridge) {
-    hint.textContent = 'VK Bridge недоступен (запустите внутри ВК)';
+
+  if (!isVK()) {
+    hint.textContent = 'Список друзей доступен только внутри ВК — введите имя вручную';
     return;
   }
+
+  hint.textContent = 'Загружаем друзей…';
   try {
-    const res = await bridge.send('VKWebAppGetFriends', { fields: ['first_name', 'last_name', 'photo_100'] });
-    const items = (res && res.items) || [];
-    hint.textContent = 'Найдено друзей: ' + items.length;
-    openEmployeePicker(items);
+    const users = await vkGetFriends();
+    hint.textContent = users.length ? 'Найдено друзей: ' + users.length : 'Друзей не найдено';
+    openEmployeePicker(users);
   } catch (e) {
     hint.textContent = 'Не удалось загрузить друзей — добавьте сотрудника вручную';
   }
 }
 
 function openEmployeePicker(friends) {
+  clearDialog(); // освобождаем модалку, если открыт диалог
+
   const body = $('#modal-body');
   const footer = $('#modal-footer');
   $('#modal-title').textContent = 'Выберите сотрудника';
@@ -150,7 +302,12 @@ function openEmployeePicker(friends) {
   } else {
     body.innerHTML = '<div class="empty">Друзей не найдено</div>';
   }
-  footer.innerHTML = '<button class="btn btn--primary btn--full" onclick="closeModal()">Закрыть</button>';
+  footer.innerHTML = '';
+  const closeBtn = document.createElement('button');
+  closeBtn.className = 'btn btn--primary btn--full';
+  closeBtn.textContent = 'Закрыть';
+  closeBtn.onclick = closeModal;
+  footer.appendChild(closeBtn);
   openModal();
 }
 
@@ -163,6 +320,7 @@ function openModal() {
 function closeModal() {
   $('#overlay').classList.add('hidden');
   $('#modal').classList.add('hidden');
+  clearDialog(); // закрытие по ✕/оверлею = ответ «нет» для активного диалога
 }
 
 /* ---------- Вкладка: График ---------- */
@@ -230,18 +388,13 @@ function renderSchedule() {
   });
 }
 
-function deleteShift(id) {
-  if (!confirm('Удалить эту смену?')) return;
+async function deleteShift(id) {
+  const ok = await confirmDialog('Удалить эту смену?', 'Удалить');
+  if (!ok) return;
   state.shifts = state.shifts.filter(s => s.id !== id);
   saveState();
   renderSchedule();
-}
-
-function downloadICSShift(id) {
-  const s = state.shifts.find(x => x.id === id);
-  if (!s) return;
-  const emp = state.employees.find(e => e.id === s.employeeId) || { name: s.employeeName || '' };
-  downloadICS(s, emp.name);
+  toast('Смена удалена');
 }
 
 function handleFormSubmit(ev) {
@@ -252,9 +405,9 @@ function handleFormSubmit(ev) {
   const time = $('#inp-time').value;
   const duration = parseFloat($('#inp-duration').value) || 6; // Deafult: 6 часов
 
-  if (!empName) { alert('Укажите сотрудника'); return; }
-  if (!store) { alert('Укажите точку магазина'); return; }
-  if (!date || !time) { alert('Укажите дату и время смены'); return; }
+  if (!empName) { toast('Укажите сотрудника'); return; }
+  if (!store) { toast('Укажите точку магазина'); return; }
+  if (!date || !time) { toast('Укажите дату и время смены'); return; }
 
   const emp = addEmployee(empName);
   if (store && !state.stores.includes(store)) {
@@ -277,6 +430,7 @@ function handleFormSubmit(ev) {
   $('#inp-duration').value = 6; // Default: 6 часов
   $('#inp-date').value = fmtISO(new Date());
   renderSchedule();
+  toast('Смена добавлена');
 }
 
 /* ---------- Вкладка: Статистика ---------- */
@@ -317,13 +471,15 @@ function renderStats() {
 
 /* ---------- Рассылка графиков ---------- */
 function openBroadcast() {
+  clearDialog(); // освобождаем модалку, если открыт диалог
+
   const { mon, sun } = weekBounds(state.weekOffset);
   const weekShifts = state.shifts.filter(s => {
     const d = parseISO(s.date);
     return d >= mon && d <= sun;
   });
   if (weekShifts.length === 0) {
-    alert('На эту неделю нет смен для рассылки');
+    toast('На эту неделю нет смен для рассылки');
     return;
   }
 
@@ -341,11 +497,17 @@ function openBroadcast() {
   let allText = 'График смен на неделю с ' + showShort(mon) + ' по ' + showShort(sun) + ':\n\n';
 
   Object.values(byEmp).forEach(emp => {
-    const lines = emp.shifts.sort((a, b) => a.time.localeCompare(b.time)).map(s =>
-      '• ' + showDate(parseISO(s.date)) + ' ' + showTime(s.time) + ' — ' + escapeHtml(s.store) + ' (' + (s.durationHours || 6) + ' ч)'
-    ).join('\n');
+    // Текст для буфера обмена собираем «как есть», без HTML-экранирования
+    const lines = emp.shifts
+      .slice()
+      .sort((a, b) => a.time.localeCompare(b.time))
+      .map(s =>
+        '• ' + showDate(parseISO(s.date)) + ' ' + showTime(s.time) +
+        ' — ' + (s.store || '—') + ' (' + (s.durationHours || 6) + ' ч)'
+      )
+      .join('\n');
     const text =
-      'Здравствуйте, ' + escapeHtml(emp.name) + '!\n' +
+      'Здравствуйте, ' + emp.name + '!\n' +
       'Ваш график смен на неделю с ' + showShort(mon) + ' по ' + showShort(sun) + ':\n' +
       lines + '\n\n' +
       'Чтобы добавить смену в календарь телефона (iOS/Android), используйте кнопку «📅» напротив смены в приложении «Назначение Смен» — будет скачан файл .ics.\n';
@@ -353,37 +515,63 @@ function openBroadcast() {
 
     const wrap = document.createElement('div');
     wrap.className = 'broadcast-item';
-    wrap.innerHTML =
-      '<div class="broadcast-item__head"><b>' + escapeHtml(emp.name) + '</b> — ' + emp.shifts.length + ' смен(ы)</div>' +
-      '<div class="broadcast-item__text">' + escapeHtml(lines).replace(/\n/g, '<br>') + '</div>' +
-      '<button class="btn btn--outline btn--small" onclick="app.copyText(\'' + escapeJs(text) + '\')">Копировать график</button>';
+
+    const head = document.createElement('div');
+    head.className = 'broadcast-item__head';
+    const headName = document.createElement('b');
+    headName.textContent = emp.name;
+    head.appendChild(headName);
+    head.appendChild(document.createTextNode(' — ' + emp.shifts.length + ' смен(ы)'));
+
+    const linesBox = document.createElement('div');
+    linesBox.className = 'broadcast-item__text';
+    linesBox.textContent = lines;
+
+    const copyBtn = document.createElement('button');
+    copyBtn.className = 'btn btn--outline btn--small';
+    copyBtn.textContent = 'Копировать график';
+    copyBtn.onclick = () => copyText(text);
+
+    wrap.appendChild(head);
+    wrap.appendChild(linesBox);
+    wrap.appendChild(copyBtn);
     body.appendChild(wrap);
   });
 
-  footer.innerHTML =
-    '<button class="btn btn--primary btn--full" onclick="app.copyText(\'' + escapeJs(allText) + '\')">Копировать всё (все сотрудники)</button>' +
-    '<button class="btn btn--outline btn--full" onclick="closeModal()">Закрыть</button>';
+  footer.innerHTML = '';
+  const copyAllBtn = document.createElement('button');
+  copyAllBtn.className = 'btn btn--primary btn--full';
+  copyAllBtn.textContent = 'Копировать всё (все сотрудники)';
+  copyAllBtn.onclick = () => copyText(allText);
+
+  const closeBtn = document.createElement('button');
+  closeBtn.className = 'btn btn--outline btn--full';
+  closeBtn.textContent = 'Закрыть';
+  closeBtn.onclick = closeModal;
+
+  footer.appendChild(copyAllBtn);
+  footer.appendChild(closeBtn);
   openModal();
 }
 
-function copyText(text) {
-  if (bridge) {
-    bridge.send('VKWebAppCopyText', { text: text }).then(() => {
-      alert('Текст скопирован в буфер обмена!');
-    }).catch(() => {
-      navigator.clipboard.writeText(text).then(() => {
-        alert('Текст скопирован в буфер обмена.');
-      }).catch(() => {
-        alert('Не удалось скопировать. Выделите текст вручную.');
-      });
-    });
-  } else {
-    navigator.clipboard.writeText(text).then(() => {
-      alert('Текст скопирован в буфер обмена.');
-    }).catch(() => {
-      alert('Не удалось скопировать. Выделите текст вручную.');
-    });
+/** Копирование: VKWebAppCopyText → navigator.clipboard → ручное выделение текста. */
+async function copyText(text) {
+  const how = await vkCopyText(text);
+  if (how) {
+    toast(how === 'bridge' ? 'Скопировано в буфер обмена ВК' : 'Скопировано в буфер обмена');
+    return;
   }
+
+  const area = document.createElement('textarea');
+  area.className = 'dialog-textarea';
+  area.readOnly = true;
+  area.value = text;
+  await showDialog({
+    title: 'Копирование',
+    text: 'Автоматическое копирование недоступно. Выделите текст ниже и скопируйте его вручную.',
+    extra: area,
+    buttons: [{ label: 'Закрыть', primary: true, value: true }]
+  });
 }
 
 /* ---------- Календарь .ics (iOS + Android) ---------- */
@@ -405,56 +593,130 @@ function addMinutesICS(dtStr, mins) {
   return d.getFullYear() + pad(d.getMonth() + 1) + pad(d.getDate()) + 'T' + pad(d.getHours()) + pad(d.getMinutes()) + pad(d.getSeconds());
 }
 
-function downloadICS(shift, empName) {
+/** Экранирование значений по RFC 5545 (в .ics нельзя HTML-сущности). */
+function icsEscape(value) {
+  return String(value || '')
+    .replace(/\\/g, '\\\\')
+    .replace(/;/g, '\\;')
+    .replace(/,/g, '\\,')
+    .replace(/\r?\n/g, '\\n');
+}
+
+function buildICS(shift, empName) {
   const start = icsDT(shift.date, shift.time);
   const end = addMinutesICS(start, Math.round((shift.durationHours || 6) * 60));
+  const stamp = new Date().toISOString().replace(/[-:]/g, '').replace(/\.\d{3}/, '');
+  const store = shift.store || 'Точка магазина';
+
   const ics = [
     'BEGIN:VCALENDAR',
     'VERSION:2.0',
     'PRODID:-//VK Shift App//RU',
     'CALSCALE:GREGORIAN',
+    'METHOD:PUBLISH',
     'BEGIN:VEVENT',
     'UID:' + shift.id + '@vkshift',
+    'DTSTAMP:' + stamp,
     'DTSTART:' + start,
     'DTEND:' + end,
-    'SUMMARY:Смена — ' + escapeHtml(shift.store || 'Точка магазина'),
-    'DESCRIPTION:Сотрудник: ' + escapeHtml(empName || '') + '\\nТочка: ' + escapeHtml(shift.store || ''),
+    'SUMMARY:' + icsEscape('Смена — ' + store),
+    'LOCATION:' + icsEscape(store),
+    'DESCRIPTION:' + icsEscape('Сотрудник: ' + (empName || '') + '\nТочка: ' + store + '\nДлительность: ' + (shift.durationHours || 6) + ' ч'),
     'END:VEVENT',
     'END:VCALENDAR'
   ].join('\r\n');
 
-  const blob = new Blob([ics], { type: 'text/calendar;charset=utf-8' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = 'смена_' + shift.date + '_' + shift.time.replace(':', '') + '.ics';
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-  URL.revokeObjectURL(url);
+  return {
+    text: ics,
+    filename: 'смена_' + shift.date + '_' + shift.time.replace(':', '') + '.ics'
+  };
+}
 
-  const ua = navigator.userAgent;
-  let hint = 'Файл календаря (.ics) скачан. Откройте его в календарном приложении.';
-  if (/iphone|ipad|ipod/i.test(ua)) hint = 'iOS: откройте файл .ics — событие добавится в Календарь.';
-  else if (/android/i.test(ua)) hint = 'Android: откройте файл .ics и добавьте событие в Google Календарь.';
-  setTimeout(() => alert(hint), 100);
+/**
+ * Скачивание через <a download> внутри iframe.
+ * Никаких window.open / window.top / target=_blank — только скачивание в той же вкладке.
+ */
+function anchorDownload(text, filename) {
+  try {
+    const blob = new Blob([text], { type: 'text/calendar;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    a.rel = 'noopener';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    // WebView может обработать клик не мгновенно — не отзываем URL сразу
+    setTimeout(() => URL.revokeObjectURL(url), 30000);
+    return true;
+  } catch (e) {
+    return false;
+  }
+}
+
+/**
+ * Экспорт смены в календарь.
+ * В нативном клиенте ВК сначала пробуем VKWebAppDownloadFile (data:-URI),
+ * затем обычное скачивание, и всегда предлагаем запасной путь — копирование .ics.
+ */
+async function exportICS(shift, empName) {
+  const { text, filename } = buildICS(shift, empName);
+
+  if (isNativeClient()) {
+    let ok = false;
+    try {
+      ok = await vkDownloadFile('data:text/calendar;charset=utf-8,' + encodeURIComponent(text), filename);
+    } catch (e) {
+      ok = false;
+    }
+
+    if (ok) {
+      toast('Файл .ics отправлен на скачивание. Если он не открылся — нажмите 📅 ещё раз');
+      return;
+    }
+
+    anchorDownload(text, filename);
+    showICSFallbackDialog(text, filename, () => exportICS(shift, empName));
+    return;
+  }
+
+  anchorDownload(text, filename);
+  toast('Файл .ics сохранён — откройте его в календаре');
+}
+
+function showICSFallbackDialog(text, filename, onRetry) {
+  const area = document.createElement('textarea');
+  area.className = 'dialog-textarea';
+  area.readOnly = true;
+  area.value = text;
+
+  showDialog({
+    title: 'Календарь .ics',
+    text: 'Скачивание через ВК недоступно. Если файл «' + filename + '» не сохранился, скопируйте содержимое ниже, сохраните его в файл с расширением .ics и откройте в календаре.',
+    extra: area,
+    buttons: [
+      { label: 'Скопировать .ics', primary: true, value: 'copy' },
+      { label: 'Повторить', value: 'retry' },
+      { label: 'Закрыть', value: null }
+    ]
+  }).then((res) => {
+    if (res === 'copy') copyText(text);
+    else if (res === 'retry' && onRetry) onRetry();
+  });
+}
+
+async function downloadICSShift(id) {
+  const s = state.shifts.find(x => x.id === id);
+  if (!s) return;
+  const emp = state.employees.find(e => e.id === s.employeeId) || { name: s.employeeName || '' };
+  await exportICS(s, emp.name);
 }
 
 /* ---------- Инициализация ---------- */
 function initVK() {
-  if (bridge) {
-    bridge.subscribe((e) => {
-      if (e.detail.type === 'VKWebAppUpdateConfig') {
-        const scheme = e.detail.data.color_scheme;
-        document.documentElement.setAttribute('data-scheme', scheme);
-      }
-    });
-    bridge.send('VKWebAppInit').catch(() => {});
-    bridge.send('VKWebAppSetViewSettings', {
-      status_bar_style: 'light',
-      action_bar_color: '#FFFFFF'
-    }).catch(() => {});
-  }
+  // vk.js: VKWebAppInit, запрос конфига (тема + safe-area), цвет статус-бара
+  return vkInit();
 }
 
 function navTabs() {
@@ -495,5 +757,17 @@ document.addEventListener('DOMContentLoaded', () => {
 
   renderSchedule();
 
-  window.app = { copyText, closeModal, openBroadcast };
+  // Данные из VK Storage подтягиваются после отрисовки — старт не блокируется
+  pullStateFromVK().catch(() => {});
+
+  // Клавиатура внутри iframe ВК: активное поле ввода должно оставаться на экране
+  document.addEventListener('focusin', (e) => {
+    const el = e.target;
+    if (!el || el.tagName !== 'INPUT') return;
+    const type = el.type || 'text';
+    if (!/^(text|search|date|time|number|tel|url|email)$/.test(type)) return;
+    setTimeout(() => {
+      try { el.scrollIntoView({ block: 'center', behavior: 'smooth' }); } catch (err) {}
+    }, 350);
+  });
 });

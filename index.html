@@ -2,12 +2,18 @@
 <html lang="ru">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <!-- viewport-fit=cover + safe-area: отступы под «челку»/вырез берём из VKWebAppUpdateConfig -->
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
   <meta name="theme-color" content="#ffffff" />
+  <meta name="referrer" content="no-referrer" />
   <title>Назначение Смен — VK Mini App</title>
   <link rel="stylesheet" href="css/style.css" />
-  <!-- VK Bridge — позволяет приложению взаимодействовать с ВК (друзья, уведомления и т.д.) -->
-  <script src="https://unpkg.com/@vkontakte/vk-bridge@latest/dist/vk-bridge.min.js"></script>
+  <!--
+    VK Bridge (v3, локальная копия — не зависит от CDN и не ломается при обновлении @latest).
+    Глобальные имена: window.vkBridge / window.vkConnect.
+    Вне ВК (GitHub Pages) bridge просто «молчит» — приложение работает как обычная страница.
+  -->
+  <script src="js/vk-bridge.min.js"></script>
 </head>
 <body>
   <div id="app">
@@ -58,7 +64,7 @@
           <div class="form__row">
             <div>
               <label class="form__label">Длительность (ч)</label>
-              <input type="number" id="inp-duration" class="input input--small" min="0.5" step="0.5" value="8" />
+              <input type="number" id="inp-duration" class="input input--small" min="0.5" step="0.5" value="6" />
             </div>
           </div>
 
@@ -96,6 +102,9 @@
       <div class="modal__body" id="modal-body"></div>
       <div class="modal__footer" id="modal-footer"></div>
     </div>
+
+    <!-- Toast-уведомления вместо alert() (нативные диалоги в iframe ВК выглядят плохо) -->
+    <div class="toast" id="toast" role="status" aria-live="polite"></div>
   </div>
   <script type="module" src="js/app.js"></script>
 </body>

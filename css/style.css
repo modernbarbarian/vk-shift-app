@@ -1,4 +1,20 @@
 * { box-sizing: border-box; }
+
+:root {
+  /* Отступы под вырез/«челку»: значения приходят из VKWebAppUpdateConfig.insets,
+     до этого (и вне ВК) используем стандартные env() */
+  --vk-safe-top: env(safe-area-inset-top, 0px);
+  --vk-safe-right: env(safe-area-inset-right, 0px);
+  --vk-safe-bottom: env(safe-area-inset-bottom, 0px);
+  --vk-safe-left: env(safe-area-inset-left, 0px);
+  --page-height: 100vh;
+}
+@supports (height: 100dvh) {
+  /* Внутри iframe ВК виртуальная клавиатура меняет высоту окна:
+     dvh учитывает это лучше, чем статичный vh */
+  :root { --page-height: 100dvh; }
+}
+
 html, body {
   margin: 0;
   padding: 0;
@@ -8,10 +24,20 @@ html, body {
   font-size: 16px;
   line-height: 1.5;
   -webkit-tap-highlight-color: transparent;
+  /* Не даём «pull-to-refresh» перезагружать мини-приложение внутри ВК */
+  overscroll-behavior-y: none;
 }
-body { min-height: 100vh; }
+body { min-height: var(--page-height); }
 
-#app { display: flex; flex-direction: column; min-height: 100vh; }
+#app {
+  display: flex;
+  flex-direction: column;
+  min-height: var(--page-height);
+  padding-top: var(--vk-safe-top);
+  padding-bottom: var(--vk-safe-bottom);
+  padding-left: var(--vk-safe-left);
+  padding-right: var(--vk-safe-right);
+}
 
 .header {
   padding: 16px 16px 8px;
@@ -239,12 +265,12 @@ body { min-height: 100vh; }
 }
 .btn-cal:hover { background: #f5f5f5; }
 
-.footer-actions { padding: 0 12px 80px; }
+.footer-actions { padding: 0 12px calc(80px + var(--vk-safe-bottom)); }
 
 .fab {
   position: fixed;
-  right: 16px;
-  bottom: 88px;
+  right: calc(16px + var(--vk-safe-right));
+  bottom: calc(88px + var(--vk-safe-bottom));
   width: 56px;
   height: 56px;
   border-radius: 50%;
@@ -270,7 +296,7 @@ body { min-height: 100vh; }
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 16px;
+  padding: calc(16px + var(--vk-safe-top)) 16px calc(16px + var(--vk-safe-bottom));
 }
 .overlay.hidden { display: none; }
 .modal {
@@ -303,11 +329,13 @@ body { min-height: 100vh; }
 }
 .modal__body { padding: 16px; }
 .modal__footer {
-  padding: 12px 16px;
+  padding: 12px 16px calc(12px + var(--vk-safe-bottom));
   border-top: 1px solid #e5e5e5;
   display: flex;
   gap: 8px;
+  flex-wrap: wrap;
 }
+.modal__footer .btn { flex: 1 1 45%; }
 
 /* Выбор сотрудника из друзей */
 .picker-item {
@@ -377,3 +405,101 @@ body { min-height: 100vh; }
 @media (min-width: 520px) {
   #app { max-width: 520px; margin: 0 auto; }
 }
+
+/* ---------- Диалоги и поля с текстом ---------- */
+.dialog-text {
+  font-size: 15px;
+  color: #333;
+  margin-bottom: 12px;
+  white-space: pre-wrap;
+}
+.dialog-textarea {
+  width: 100%;
+  min-height: 160px;
+  resize: vertical;
+  border: 1px solid #d9d9d9;
+  border-radius: 10px;
+  padding: 10px 12px;
+  font-size: 13px;
+  line-height: 1.45;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  background: #fafafa;
+  color: #1a1a1a;
+}
+.dialog-textarea:focus { outline: none; border-color: #2f88ff; }
+
+/* ---------- Toast (вместо alert) ---------- */
+.toast {
+  position: fixed;
+  left: 50%;
+  bottom: calc(24px + var(--vk-safe-bottom));
+  transform: translate(-50%, 12px);
+  max-width: calc(100% - 32px);
+  background: rgba(25, 25, 26, 0.94);
+  color: #ffffff;
+  padding: 10px 16px;
+  border-radius: 14px;
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.35;
+  text-align: center;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.25);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.2s ease, transform 0.2s ease;
+  z-index: 200;
+}
+.toast--show { opacity: 1; transform: translate(-50%, 0); }
+
+/* ---------- Тёмная тема: применяется по data-appearance из VKWebAppUpdateConfig ---------- */
+[data-appearance="dark"] {
+  color-scheme: dark;
+  background: #19191a;
+}
+[data-appearance="dark"] body { background: #19191a; color: #e5e5e7; }
+[data-appearance="dark"] .tabs,
+[data-appearance="dark"] .card,
+[data-appearance="dark"] .modal,
+[data-appearance="dark"] .shift-item,
+[data-appearance="dark"] .stat-card,
+[data-appearance="dark"] .broadcast-item,
+[data-appearance="dark"] .day-section,
+[data-appearance="dark"] .picker-item {
+  background: #232324;
+  border-color: #3a3a3c;
+}
+[data-appearance="dark"] .day-section__head {
+  background: #2c2c2e;
+  border-color: #3a3a3c;
+  color: #a1a1a6;
+}
+[data-appearance="dark"] .modal__header,
+[data-appearance="dark"] .modal__footer { border-color: #3a3a3c; }
+[data-appearance="dark"] .toolbar { color: #c7c7cc; }
+[data-appearance="dark"] .card__title,
+[data-appearance="dark"] .shift-item__who,
+[data-appearance="dark"] .stat-card__name,
+[data-appearance="dark"] .stat-row b,
+[data-appearance="dark"] .broadcast-item__head,
+[data-appearance="dark"] .modal__title { color: #f2f2f7; }
+[data-appearance="dark"] .shift-item__when,
+[data-appearance="dark"] .broadcast-item__text,
+[data-appearance="dark"] .stat-row,
+[data-appearance="dark"] .dialog-text { color: #a1a1a6; }
+[data-appearance="dark"] .form__label,
+[data-appearance="dark"] .tab { color: #8e8e93; }
+[data-appearance="dark"] .tab--active { color: #5c9dff; }
+[data-appearance="dark"] .btn--outline { background: #2c2c2e; border-color: #48484a; color: #c7c7cc; }
+[data-appearance="dark"] .input,
+[data-appearance="dark"] .btn-icon,
+[data-appearance="dark"] .btn-cal,
+[data-appearance="dark"] .dialog-textarea {
+  background: #1c1c1e;
+  border-color: #48484a;
+  color: #e5e5e7;
+}
+[data-appearance="dark"] .btn-close { color: #a1a1a6; }
+[data-appearance="dark"] .hint,
+[data-appearance="dark"] .empty { color: #8e8e93; }
+[data-appearance="dark"] .btn-cal:hover,
+[data-appearance="dark"] .btn-icon:hover { background: #2c2c2e; }

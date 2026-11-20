@@ -1,0 +1,291 @@
+/**
+ * Обёртка над VK Bridge для мини-приложения ВК.
+ *
+ * Задачи модуля:
+ *  1. Инициализация мини-приложения (VKWebAppInit) и получение конфига
+ *     (тема оформления, safe-area инсеты) → они применяются к документу.
+ *  2. Доступ к API клиента ВК: друзья, буфер обмена, скачивание файла, VK Storage.
+ *  3. Отсутствие жёстких зависимостей: вне ВК (GitHub Pages, локальный сервер)
+ *     каждый метод безопасно отклоняется — приложение работает как обычная веб-страница.
+ *
+ * Важные особенности iframe ВК:
+ *  - клиент не отвечает на некоторые вызовы → нужен таймаут, иначе Promise зависнет;
+ *  - недоступные методы нужно проверять через supportsAsync, а не падать;
+ *  - ссылок на window.top / window.open / прямых переходов в приложении нет
+ *    (это запрещено в мини-приложениях), общение идёт только через bridge.
+ */
+
+/** Глобальный bridge: v3 экспортит window.vkBridge (и алиас window.vkConnect). */
+export const bridge = (typeof window !== 'undefined' && (window.vkBridge || window.vkConnect)) || null;
+
+const SEND_TIMEOUT = 6000;
+const SUPPORT_TIMEOUT = 4000;
+const STORAGE_MAX_VALUE = 60000; // лимит значения в VK Storage ~64 КБ
+
+/** Поддерживаемые методы кэшируем: положительный ответ — надёжный, отрицательный — нет. */
+const supportedCache = new Set();
+
+let inited = false;
+let currentAppearance = 'light';
+
+/* ---------- Низкоуровневая отправка с таймаутом ---------- */
+
+function rejectWith(method, errorType) {
+  return Promise.reject({ error_type: errorType, error_data: { method } });
+}
+
+/**
+ * Отправляет событие в клиент ВК и ждёт ответ не дольше `timeout`.
+ * Без таймаута недоступный метод «зависает» навсегда и блокирует UI.
+ */
+export function send(method, params = {}, timeout = SEND_TIMEOUT) {
+  if (!bridge) return rejectWith(method, 'no_bridge');
+
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      reject({ error_type: 'timeout', error_data: { method } });
+    }, timeout);
+
+    const done = (fn, value) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      fn(value);
+    };
+
+    try {
+      const p = bridge.send(method, params);
+      if (!p || typeof p.then !== 'function') {
+        done(reject, { error_type: 'no_response', error_data: { method } });
+        return;
+      }
+      p.then((res) => done(resolve, res)).catch((err) => done(reject, err));
+    } catch (err) {
+      done(reject, err);
+    }
+  });
+}
+
+/* ---------- Определение окружения ---------- */
+
+/** Есть ли launch-параметры ВК в адресной строке (?vk_user_id=…&vk_group_id=…). */
+function hasLaunchParams() {
+  try {
+    return /[?&#](vk_user_id|vk_group_id|vk_app_id|vk_platform)=/.test(
+      window.location.search + window.location.hash
+    );
+  } catch (e) {
+    return false;
+  }
+}
+
+/**
+ * Запущено ли приложение внутри ВК (iframe на vk.ru / мобильный клиент).
+ * На GitHub Pages всегда false → все вызовы деградируют без ошибок.
+ */
+export function isVK() {
+  if (!bridge) return false;
+  try {
+    if (bridge.isWebView() || bridge.isIframe() || bridge.isEmbedded()) return true;
+  } catch (e) { /* игнорируем */ }
+  return hasLaunchParams();
+}
+
+/**
+ * Нативный клиент Android/iOS: здесь обычное скачивание <a download> ненадёжно,
+ * поэтому для файлов используется VKWebAppDownloadFile.
+ */
+export function isNativeClient() {
+  if (!bridge) return false;
+  try {
+    return !!bridge.isWebView();
+  } catch (e) {
+    return false;
+  }
+}
+
+/** Проверка поддержки метода клиентом (с кэшированием положительного ответа). */
+export async function supports(method) {
+  if (!isVK()) return false;
+  if (supportedCache.has(method)) return true;
+
+  let ok = false;
+  try {
+    if (typeof bridge.supportsAsync === 'function') {
+      ok = await Promise.race([
+        bridge.supportsAsync(method),
+        new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), SUPPORT_TIMEOUT))
+      ]);
+    } else if (typeof bridge.supports === 'function') {
+      ok = !!bridge.supports(method);
+    }
+  } catch (e) {
+    ok = false;
+  }
+
+  if (ok) supportedCache.add(method);
+  return !!ok;
+}
+
+/* ---------- Инициализация, тема и инсеты ---------- */
+
+function applyConfig(data) {
+  if (!data) return;
+
+  const rawScheme = data.scheme || data.color_scheme || '';
+  const appearance =
+    data.appearance || (/(dark|space_gray|black)/i.test(rawScheme) ? 'dark' : 'light');
+
+  currentAppearance = appearance === 'dark' ? 'dark' : 'light';
+
+  const root = document.documentElement;
+  root.setAttribute('data-appearance', currentAppearance);
+  root.setAttribute('data-scheme', rawScheme || (currentAppearance === 'dark' ? 'space_gray' : 'bright_light'));
+  root.style.colorScheme = currentAppearance;
+
+  const themeMeta = document.querySelector('meta[name="theme-color"]');
+  if (themeMeta) themeMeta.content = currentAppearance === 'dark' ? '#19191a' : '#ffffff';
+
+  // Safe-area (вырез/«челка» на iOS) — из VKWebAppUpdateConfig.insets
+  const insets = data.insets;
+  if (insets) {
+    root.style.setProperty('--vk-safe-top', (insets.top || 0) + 'px');
+    root.style.setProperty('--vk-safe-right', (insets.right || 0) + 'px');
+    root.style.setProperty('--vk-safe-bottom', (insets.bottom || 0) + 'px');
+    root.style.setProperty('--vk-safe-left', (insets.left || 0) + 'px');
+  }
+
+  // Размер окна-«родителя»: внутри iframe наш viewport может отличаться
+  if (data.viewport_height) root.style.setProperty('--vk-vh', data.viewport_height + 'px');
+  if (data.viewport_width) root.style.setProperty('--vk-vw', data.viewport_width + 'px');
+
+  applyViewSettings();
+}
+
+/** Цвет статус-бара и шторки под текущую тему (best-effort, ошибка игнорируется). */
+function applyViewSettings() {
+  if (!isVK()) return;
+  const dark = currentAppearance === 'dark';
+  send('VKWebAppSetViewSettings', {
+    status_bar_style: dark ? 'light' : 'dark', // «light» = светлые иконки на тёмном фоне
+    action_bar_color: dark ? '#19191a' : '#ffffff',
+    navigation_bar_color: dark ? '#19191a' : '#ffffff'
+  }).catch(() => {});
+}
+
+/**
+ * Инициализация мини-приложения: подписка на события клиента,
+ * VKWebAppInit, запрос конфига (тема + инсеты).
+ * Возвращает true, если bridge доступен.
+ */
+export function init(onConfig) {
+  if (!bridge) return false;
+  if (inited) return true;
+  inited = true;
+
+  const handle = (evt) => {
+    const type = evt && evt.detail && evt.detail.type;
+    if (type === 'VKWebAppUpdateConfig' || type === 'VKWebAppGetConfigResult') {
+      applyConfig(evt.detail.data);
+      if (typeof onConfig === 'function') onConfig(evt.detail.data);
+    }
+  };
+
+  try {
+    bridge.subscribe(handle);
+  } catch (e) { /* игнорируем */ }
+
+  // Первым делом — инициализация, без неё клиент не обрабатывает остальные события
+  send('VKWebAppInit', {}, 8000)
+    .catch(() => {})
+    .then(() => send('VKWebAppGetConfig', {}, 5000))
+    .then((config) => {
+      applyConfig(config);
+      if (typeof onConfig === 'function') onConfig(config);
+    })
+    .catch(() => {});
+
+  return true;
+}
+
+/* ---------- API ---------- */
+
+/**
+ * Список друзей пользователя.
+ * Возвращает массив { id, first_name, last_name, photo_200 }.
+ * Раньше результат читался из res.items — в актуальных версиях клиента это res.users.
+ */
+export async function getFriends() {
+  const res = await send('VKWebAppGetFriends', {}, 8000);
+  return (res && (res.users || res.items)) || [];
+}
+
+/**
+ * Копирование текста в буфер обмена: сначала клиент ВК, затем обычный clipboard.
+ * @returns {Promise<'bridge'|'clipboard'|null>}
+ */
+export async function copyText(text) {
+  if (isVK() && (await supports('VKWebAppCopyText'))) {
+    try {
+      await send('VKWebAppCopyText', { text: String(text) }, 6000);
+      return 'bridge';
+    } catch (e) { /* пробуем обычный clipboard */ }
+  }
+
+  try {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      await navigator.clipboard.writeText(String(text));
+      return 'clipboard';
+    }
+  } catch (e) { /* недоступно (не HTTPS, нет разрешения) */ }
+
+  return null;
+}
+
+/**
+ * Скачивание файла клиентом ВК (Android/iOS).
+ * `url` должен быть http(s) или data: — blob-URL клиент увидеть не может.
+ * @returns {Promise<boolean>} true — файл уходит на скачивание
+ */
+export async function downloadFile(url, filename) {
+  if (!isVK() || !(await supports('VKWebAppDownloadFile'))) return false;
+  try {
+    const res = await send('VKWebAppDownloadFile', { url, filename }, 15000);
+    return !!(res && res.result);
+  } catch (e) {
+    return false;
+  }
+}
+
+/** Чтение переменной из VK Storage (привязана к пользователю, а не к устройству). */
+export async function storageGet(key) {
+  if (!isVK() || !(await supports('VKWebAppStorageGet'))) return null;
+  try {
+    const res = await send('VKWebAppStorageGet', { keys: [key] }, 8000);
+    const items = (res && res.keys) || [];
+    const found = items.find((k) => k.key === key);
+    return found && typeof found.value === 'string' ? found.value : null;
+  } catch (e) {
+    return null;
+  }
+}
+
+/** Запись переменной в VK Storage. */
+export async function storageSet(key, value) {
+  const str = String(value);
+  if (str.length > STORAGE_MAX_VALUE) return false; // переполнение — молча оставляем localStorage
+  if (!isVK() || !(await supports('VKWebAppStorageSet'))) return false;
+  try {
+    await send('VKWebAppStorageSet', { key, value: str }, 8000);
+    return true;
+  } catch (e) {
+    return false;
+  }
+}
+
+export function getAppearance() {
+  return currentAppearance;
+}
