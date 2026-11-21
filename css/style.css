@@ -185,6 +185,9 @@ body { min-height: var(--page-height); }
   background: #b3d7ff;
   cursor: not-allowed;
 }
+.btn--danger { background: #ef4444; color: #fff; }
+.btn--danger:disabled { background: #f5a8a8; cursor: not-allowed; }
+.btn--danger:not(:disabled):hover { background: #dc2626; }
 
 .shift-list { display: flex; flex-direction: column; gap: 8px; }
 .day-section {
@@ -276,6 +279,7 @@ body { min-height: var(--page-height); }
   z-index: 100;
 }
 .overlay.hidden { display: none; }
+.modal.hidden { display: none; }
 .modal {
   position: fixed;              /* позицию считает openModal(): центр относительно кнопки-источника */
   background: #fff;
@@ -298,15 +302,6 @@ body { min-height: var(--page-height); }
   border-bottom: 1px solid #e5e5e5;
 }
 .modal__title { font-size: 18px; font-weight: 700; margin: 0; }
-.btn-close {
-  appearance: none;
-  border: 0;
-  background: transparent;
-  font-size: 22px;
-  color: #666;
-  cursor: pointer;
-  line-height: 1;
-}
 .modal__body { padding: 16px; }
 .modal__footer {
   padding: 12px 16px calc(12px + var(--vk-safe-bottom));
@@ -538,7 +533,6 @@ body { min-height: var(--page-height); }
   border-color: #48484a;
   color: #e5e5e7;
 }
-[data-appearance="dark"] .btn-close { color: #a1a1a6; }
 [data-appearance="dark"] .hint,
 [data-appearance="dark"] .empty { color: #8e8e93; }
 [data-appearance="dark"] .day-add {

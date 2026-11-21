@@ -213,7 +213,8 @@ function showDialog(opts) {
 
     buttons.forEach((b) => {
       const btn = document.createElement('button');
-      btn.className = 'btn ' + (b.primary ? 'btn--primary' : 'btn--outline') + ' btn--full';
+      const style = b.danger ? 'btn--danger' : (b.primary ? 'btn--primary' : 'btn--outline');
+      btn.className = 'btn ' + style + ' btn--full';
       btn.textContent = b.label;
       btn.onclick = () => finish(b.value);
       footer.appendChild(btn);
@@ -229,7 +230,7 @@ function confirmDialog(text, okLabel = 'Да', anchor = null) {
     text,
     anchor,
     buttons: [
-      { label: 'Отмена', value: false },
+      { label: 'Отмена', value: false, danger: true },
       { label: okLabel, primary: true, value: true }
     ]
   });
@@ -533,7 +534,7 @@ function renderEmployeeStep(dateISO, anchor, opts) {
   body.appendChild(friendsBtn);
 
   const closeBtn = document.createElement('button');
-  closeBtn.className = 'btn btn--outline btn--full';
+  closeBtn.className = 'btn btn--danger btn--full';
   closeBtn.textContent = 'Отмена';
   closeBtn.onclick = closeModal;
   footer.appendChild(closeBtn);
@@ -1208,7 +1209,6 @@ document.addEventListener('DOMContentLoaded', () => {
 
   $('#btn-broadcast').onclick = (ev) => openBroadcast(ev.currentTarget);
 
-  $('#btn-modal-close').onclick = closeModal;
   $('#overlay').onclick = closeModal;
 
   renderSchedule();
