@@ -227,8 +227,25 @@ export async function getLaunchParams() {
   if (!isVK()) return null;
   try {
     const res = await send('VKWebAppGetLaunchParams', {}, 6000);
-    if (res && res.vk_app_id) launchParamsCache = res;
-    return launchParamsCache;
+    if (res && res.vk_app_id) {
+      launchParamsCache = res;
+      return launchParamsCache;
+    }
+    // Если клиент не вернул vk_app_id, попробуем извлечь из URL
+    const urlParams = new URLSearchParams(window.location.search + window.location.hash);
+    const urlAppId = urlParams.get('vk_app_id');
+    const urlUserId = urlParams.get('vk_user_id');
+    const urlGroupId = urlParams.get('vk_group_id');
+    if (urlAppId) {
+      launchParamsCache = {
+        vk_app_id: parseInt(urlAppId),
+        vk_user_id: urlUserId ? parseInt(urlUserId) : undefined,
+        vk_group_id: urlGroupId ? parseInt(urlGroupId) : undefined,
+        vk_platform: urlParams.get('vk_platform') || 'desktop'
+      };
+      return launchParamsCache;
+    }
+    return null;
   } catch (e) {
     return null;
   }
@@ -245,11 +262,25 @@ export function setLaunchParams(params) {
  * @returns {Promise<string|null>}
  */
 export async function getUserAuthToken(scope = 'messages') {
-  if (!isVK()) return null;
+  if (!isVK()) {
+    console.error('getUserAuthToken: приложение не запущено внутри ВК');
+    return null;
+  }
 
   const lp = await getLaunchParams();
   const appId = lp && lp.vk_app_id;
-  if (!appId) return null;
+
+  if (!appId) {
+    console.error('getUserAuthToken: vk_app_id не найден — нельзя запросить токен');
+    return null;
+  }
+
+  console.log('getUserAuthToken: запрос токена, app_id=' + appId + ', scope=' + scope);
+
+  if (!(await supports('VKWebAppGetAuthToken'))) {
+    console.error('getUserAuthToken: VKWebAppGetAuthToken не поддерживается клиентом');
+    return null;
+  }
 
   try {
     const res = await send('VKWebAppGetAuthToken', {
@@ -257,10 +288,14 @@ export async function getUserAuthToken(scope = 'messages') {
       scope,
       result: true
     }, 12000);
+    console.log('getUserAuthToken: ответ bridge', res);
     if (res && res.access_token) {
       return res.access_token;
     }
-  } catch (e) { /* пользователь не дал разрешения или метод не支持 */ }
+    console.error('getUserAuthToken: в ответе нет access_token');
+  } catch (e) {
+    console.error('getUserAuthToken: ошибка bridge', e);
+  }
   return null;
 }
 

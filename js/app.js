@@ -932,6 +932,11 @@ async function getSendToken() {
   }
   let token = await vkGetUserAuthToken('messages');
   if (token) return { token, type: 'user' };
+
+  // Диагностика: выводим состояние launch params в консоль
+  const lp = await vkGetLaunchParams();
+  console.error('getSendToken: токен не получен. launchParams=', lp);
+
   return null;
 }
 
@@ -975,11 +980,20 @@ async function runBroadcast(mode, only) {
     refreshSendButtons();
     if (broadcastState === bs) {
       setStatus('Доступ не получен.');
+      const lp = await vkGetLaunchParams();
+      const appId = lp ? lp.vk_app_id : null;
+      let hint = 'Нажмите «Отправить…» ещё раз и в появившемся окне ВК выберите «Разрешить».\n\n';
+      if (!isVK()) {
+        hint = 'Приложение открыто не внутри ВК. Отправка сообщений невозможна.\n\n';
+      } else if (!appId) {
+        hint = 'VK не передаёт идентификатор приложения (vk_app_id).\n' +
+               'Введите его вручную в поле диагностики выше и нажмите «Применить», затем попробуйте снова.\n\n';
+      }
       await showDialog({
         title: 'Не удалось отправить',
         text: 'Не удалось получить ключ доступа к сообщениям.\n' +
               (tokenError ? 'Причина: ' + tokenError + '\n\n' : '') +
-              'Нажмите «Отправить…» ещё раз и в появившемся окне ВК выберите «Разрешить».\n\n' +
+              hint +
               'Пока отправка недоступна — используйте «Копировать всё».',
         anchor: bs.anchor,
         buttons: [{ label: 'Понятно', primary: true, value: true }]
