@@ -869,11 +869,11 @@ function refreshSendButtons() {
 /** Ключ доступа: сначала пользовательский (любой пользователь), затем сообщества (админы). */
 async function getSendToken() {
   // Сначала пробуем пользовательский токен — работает у любого пользователя внутри ВК
-  let token = await vkGetUserAuthToken('messages,docs,offline');
-  if (!token) token = await vkGetUserAuthToken('messages'); // fallback без docs
+  // scope 'messages' — достаточно для отправки текста; файл загрузится через тот же токен
+  let token = await vkGetUserAuthToken('messages');
   if (token) return { token, type: 'user' };
 
-  // Фоллбек: токен сообщества (только для админов группы)
+  // Фоллбек: токен сообщества (только для админов группы) — нужно для messages + docs
   token = await vkGetCommunityToken('messages,docs');
   if (!token) token = await vkGetCommunityToken('messages');
   if (token) return { token, type: 'community' };
@@ -888,7 +888,7 @@ async function getSendToken() {
  */
 async function runBroadcast(mode, only) {
   if (!broadcastState || broadcastState.sending) return;
-  const bs = broadcastState; // окно могут закрыть во время отправки — работаем с локальной ссылкой
+  const bs = broadcastState;
 
   const pool = only || bs.items;
   const targets = pool.filter(i => i.selected !== false && i.emp.vkId);
@@ -908,9 +908,13 @@ async function runBroadcast(mode, only) {
   setStatus('Запрашиваем доступ к сообщениям…');
 
   let tokenInfo = null;
+  let tokenError = null;
   try {
     tokenInfo = await getSendToken();
-  } catch (e) { tokenInfo = null; }
+  } catch (e) {
+    tokenError = (e && e.message) || String(e);
+    tokenInfo = null;
+  }
 
   if (!tokenInfo) {
     bs.sending = false;
@@ -919,7 +923,8 @@ async function runBroadcast(mode, only) {
       setStatus('Доступ не получен.');
       await showDialog({
         title: 'Не удалось отправить',
-        text: 'Нужно разрешить приложению доступ к сообщениям и документам.\n' +
+        text: 'Не удалось получить ключ доступа к сообщениям.\n' +
+              (tokenError ? 'Причина: ' + tokenError + '\n\n' : '') +
               'Нажмите «Отправить…» ещё раз и в появившемся окне ВК выберите «Разрешить».\n\n' +
               'Пока отправка недоступна — используйте «Копировать всё».',
         anchor: bs.anchor,
@@ -931,7 +936,6 @@ async function runBroadcast(mode, only) {
 
   const { token, type } = tokenInfo;
   const lp = await vkGetLaunchParams();
-  // groupId нужен только для токена сообщества
   const groupId = type === 'community' ? (lp && lp.vk_group_id) : null;
 
   let sent = 0;
@@ -939,7 +943,7 @@ async function runBroadcast(mode, only) {
   let fileError = null;
   let msgError = null;
 
-  const senderLabel = type === 'community' ? 'сообщества' : 'вашего имени';
+  const senderLabel = type === 'community' ? 'от имени сообщества' : 'от вашего имени';
 
   for (let i = 0; i < targets.length; i++) {
     const it = targets[i];
@@ -949,18 +953,19 @@ async function runBroadcast(mode, only) {
 
     let attachment = null;
     if (mode !== 'text') {
-      if (fileError) {
-        // в режиме «только файл» без вложения отправлять нечего
-        if (mode === 'file') continue;
-      } else {
+      if (fileError && mode === 'file') {
+        continue;
+      } else if (!fileError) {
         try {
           const ics = buildICSForShifts(it.shifts, it.emp.name);
           attachment = await vkUploadDoc(ics.text, ics.filename, token, groupId);
           fileSent++;
         } catch (e) {
+          console.error('uploadDoc error:', e);
           fileError = (e && e.message) || 'загрузка файла не удалась';
           attachment = null;
           if (mode === 'file') continue;
+          // В режиме 'both' продолжаем отправку текста без файла
         }
       }
     }
@@ -973,6 +978,7 @@ async function runBroadcast(mode, only) {
       await vkSendMessage(it.emp.vkId, message, attachment, token);
       sent++;
     } catch (e) {
+      console.error('sendMessage error:', e);
       msgError = (e && e.message) || 'ошибка отправки';
     }
   }
@@ -981,7 +987,7 @@ async function runBroadcast(mode, only) {
   refreshSendButtons();
 
   const parts = [];
-  parts.push('Отправлено: ' + sent + ' из ' + targets.length);
+  parts.push('Отправлено: ' + sent + ' из ' + targets.length + ' (' + senderLabel + ')');
   if (mode !== 'text') {
     parts.push(fileError
       ? 'Файл .ics не прикреплён: ' + fileError

@@ -217,8 +217,8 @@ const API_VERSION = '5.199';
 
 /** Кэш launch-параметров (нужны vk_app_id / vk_group_id для работы с API). */
 let launchParamsCache = null;
-/** Кэш пользовательского токена (auth). */
-let userTokenCache = null;
+/** Кэш пользовательских токенов по scope. */
+const userTokenCache = new Map();
 /** Кэш токена сообщества: один запрос разрешения на весь сеанс. */
 let communityTokenCache = null;
 
@@ -240,17 +240,17 @@ export async function getLaunchParams() {
 
 /**
  * Пользовательский ключ доступа (для отправки сообщений от своего имени).
- * @param {string} scope например 'messages,docs,offline'
+ * @param {string} scope например 'messages'
  * @returns {Promise<string|null>}
  */
-export async function getUserAuthToken(scope = 'messages,docs,offline') {
+export async function getUserAuthToken(scope = 'messages') {
   const lp = await getLaunchParams();
   const appId = lp && lp.vk_app_id;
   if (!appId) return null;
 
-  if (userTokenCache && userTokenCache.scopes.indexOf(scope) !== -1) {
-    return userTokenCache.token;
-  }
+  if (userTokenCache.has(scope)) return userTokenCache.get(scope);
+
+  if (!(await supports('VKWebAppGetAuthToken'))) return null;
 
   try {
     const res = await send('VKWebAppGetAuthToken', {
@@ -259,10 +259,10 @@ export async function getUserAuthToken(scope = 'messages,docs,offline') {
       result: true
     }, 12000);
     if (res && res.access_token) {
-      userTokenCache = { token: res.access_token, scopes: [scope] };
+      userTokenCache.set(scope, res.access_token);
       return res.access_token;
     }
-  } catch (e) { /* пользователь не дал разрешения */ }
+  } catch (e) { /* пользователь не дал разрешения или метод не支持 */ }
   return null;
 }
 
@@ -277,6 +277,8 @@ export async function getCommunityToken(scope = 'messages') {
   const appId = lp && lp.vk_app_id;
   const groupId = lp && lp.vk_group_id;
   if (!appId || !groupId) return null;
+
+  if (!(await supports('VKWebAppGetCommunityToken'))) return null;
 
   if (communityTokenCache && communityTokenCache.groupId === groupId) {
     if (communityTokenCache.scopes.indexOf(scope) !== -1) return communityTokenCache.token;
@@ -302,6 +304,9 @@ export async function getCommunityToken(scope = 'messages') {
  * @throws если VK API вернул error
  */
 export async function callApi(method, params = {}, timeout = 12000) {
+  if (!(await supports('VKWebAppCallAPIMethod'))) {
+    throw new Error('VKWebAppCallAPIMethod не поддерживается клиентом');
+  }
   const res = await send(
     'VKWebAppCallAPIMethod',
     { method, params: Object.assign({}, params, { v: API_VERSION }) },
