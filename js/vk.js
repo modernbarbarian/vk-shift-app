@@ -219,8 +219,6 @@ const API_VERSION = '5.199';
 let launchParamsCache = null;
 /** Кэш пользовательских токенов по scope. */
 const userTokenCache = new Map();
-/** Кэш токена сообщества: один запрос разрешения на весь сеанс. */
-let communityTokenCache = null;
 
 /**
  * Launch-параметры мини-приложения (vk_user_id, vk_app_id, vk_group_id, …).
@@ -267,38 +265,6 @@ export async function getUserAuthToken(scope = 'messages') {
 }
 
 /**
- * Ключ доступа сообщества (нужен для messages.send / docs.* от имени сообщества).
- * Вызывается только у администратора сообщества, к которому подключено приложение.
- * @param {string} scope например 'messages' или 'messages,docs'
- * @returns {Promise<string|null>}
- */
-export async function getCommunityToken(scope = 'messages') {
-  const lp = await getLaunchParams();
-  const appId = lp && lp.vk_app_id;
-  const groupId = lp && lp.vk_group_id;
-  if (!appId || !groupId) return null;
-
-  if (!(await supports('VKWebAppGetCommunityToken'))) return null;
-
-  if (communityTokenCache && communityTokenCache.groupId === groupId) {
-    if (communityTokenCache.scopes.indexOf(scope) !== -1) return communityTokenCache.token;
-  }
-
-  try {
-    const res = await send('VKWebAppGetCommunityToken', {
-      app_id: appId,
-      group_id: groupId,
-      scope
-    }, 12000);
-    if (res && res.access_token) {
-      communityTokenCache = { groupId, token: res.access_token, scopes: [scope] };
-      return res.access_token;
-    }
-  } catch (e) { /* нет прав — вернём null, вызывающий код покажет подсказку */ }
-  return null;
-}
-
-/**
  * Вызов метода VK API через клиент ВК (без CORS: запрос делает сам клиент).
  * @returns {Promise<any>} результат метода
  * @throws если VK API вернул error
@@ -331,9 +297,8 @@ export async function callApi(method, params = {}, timeout = 12000) {
  * Используется, чтобы отправить сотруднику файл .ics вместе с сообщением.
  * @returns {Promise<string>} строка для поля `attachment` метода messages.send
  */
-export async function uploadDoc(fileText, filename, token, groupId) {
+export async function uploadDoc(fileText, filename, token) {
   const base = { access_token: token };
-  if (groupId) base.group_id = groupId;
 
   const srv = await callApi('docs.getUploadServer', base, 12000);
   const uploadUrl = srv && srv.upload_url;
@@ -361,11 +326,11 @@ export async function uploadDoc(fileText, filename, token, groupId) {
 }
 
 /**
- * Отправка сообщения в личные сообщения от имени сообщества.
+ * Отправка сообщения в личные сообщения от имени пользователя.
  * @param {number} peerId id получателя (пользователя)
  * @param {string} message текст
  * @param {string|null} attachment строка вложения, например doc123_456
- * @param {string} token ключ сообщества
+ * @param {string} token пользовательский токен
  */
 export async function sendMessage(peerId, message, attachment, token) {
   const params = {

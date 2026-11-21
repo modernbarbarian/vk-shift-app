@@ -6,7 +6,6 @@ import {
   storageGet as vkStorageGet,
   storageSet as vkStorageSet,
   getUserAuthToken as vkGetUserAuthToken,
-  getCommunityToken as vkGetCommunityToken,
   getLaunchParams as vkGetLaunchParams,
   uploadDoc as vkUploadDoc,
   sendMessage as vkSendMessage,
@@ -866,18 +865,10 @@ function refreshSendButtons() {
   });
 }
 
-/** Ключ доступа: сначала пользовательский (любой пользователь), затем сообщества (админы). */
+/** Ключ доступа: только пользовательский (любой пользователь внутри ВК). */
 async function getSendToken() {
-  // Сначала пробуем пользовательский токен — работает у любого пользователя внутри ВК
-  // scope 'messages' — достаточно для отправки текста; файл загрузится через тот же токен
   let token = await vkGetUserAuthToken('messages');
   if (token) return { token, type: 'user' };
-
-  // Фоллбек: токен сообщества (только для админов группы) — нужно для messages + docs
-  token = await vkGetCommunityToken('messages,docs');
-  if (!token) token = await vkGetCommunityToken('messages');
-  if (token) return { token, type: 'community' };
-
   return null;
 }
 
@@ -934,21 +925,17 @@ async function runBroadcast(mode, only) {
     return;
   }
 
-  const { token, type } = tokenInfo;
-  const lp = await vkGetLaunchParams();
-  const groupId = type === 'community' ? (lp && lp.vk_group_id) : null;
+  const { token } = tokenInfo;
 
   let sent = 0;
   let fileSent = 0;
   let fileError = null;
   let msgError = null;
 
-  const senderLabel = type === 'community' ? 'от имени сообщества' : 'от вашего имени';
-
   for (let i = 0; i < targets.length; i++) {
     const it = targets[i];
     if (broadcastState === bs) {
-      setStatus('Отправка ' + (i + 1) + '/' + targets.length + ': ' + it.emp.name + ' (' + senderLabel + ')…');
+      setStatus('Отправка ' + (i + 1) + '/' + targets.length + ': ' + it.emp.name + '…');
     }
 
     let attachment = null;
@@ -958,14 +945,13 @@ async function runBroadcast(mode, only) {
       } else if (!fileError) {
         try {
           const ics = buildICSForShifts(it.shifts, it.emp.name);
-          attachment = await vkUploadDoc(ics.text, ics.filename, token, groupId);
+          attachment = await vkUploadDoc(ics.text, ics.filename, token);
           fileSent++;
         } catch (e) {
           console.error('uploadDoc error:', e);
           fileError = (e && e.message) || 'загрузка файла не удалась';
           attachment = null;
           if (mode === 'file') continue;
-          // В режиме 'both' продолжаем отправку текста без файла
         }
       }
     }
@@ -987,7 +973,7 @@ async function runBroadcast(mode, only) {
   refreshSendButtons();
 
   const parts = [];
-  parts.push('Отправлено: ' + sent + ' из ' + targets.length + ' (' + senderLabel + ')');
+  parts.push('Отправлено: ' + sent + ' из ' + targets.length);
   if (mode !== 'text') {
     parts.push(fileError
       ? 'Файл .ics не прикреплён: ' + fileError
