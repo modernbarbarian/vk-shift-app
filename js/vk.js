@@ -217,6 +217,8 @@ const API_VERSION = '5.199';
 
 /** Кэш launch-параметров (нужны vk_app_id / vk_group_id для работы с API). */
 let launchParamsCache = null;
+/** Кэш пользовательского токена (auth). */
+let userTokenCache = null;
 /** Кэш токена сообщества: один запрос разрешения на весь сеанс. */
 let communityTokenCache = null;
 
@@ -234,6 +236,34 @@ export async function getLaunchParams() {
   } catch (e) {
     return null;
   }
+}
+
+/**
+ * Пользовательский ключ доступа (для отправки сообщений от своего имени).
+ * @param {string} scope например 'messages,docs,offline'
+ * @returns {Promise<string|null>}
+ */
+export async function getUserAuthToken(scope = 'messages,docs,offline') {
+  const lp = await getLaunchParams();
+  const appId = lp && lp.vk_app_id;
+  if (!appId) return null;
+
+  if (userTokenCache && userTokenCache.scopes.indexOf(scope) !== -1) {
+    return userTokenCache.token;
+  }
+
+  try {
+    const res = await send('VKWebAppGetAuthToken', {
+      app_id: appId,
+      scope,
+      result: true
+    }, 12000);
+    if (res && res.access_token) {
+      userTokenCache = { token: res.access_token, scopes: [scope] };
+      return res.access_token;
+    }
+  } catch (e) { /* пользователь не дал разрешения */ }
+  return null;
 }
 
 /**

@@ -5,6 +5,7 @@ import {
   downloadFile as vkDownloadFile,
   storageGet as vkStorageGet,
   storageSet as vkStorageSet,
+  getUserAuthToken as vkGetUserAuthToken,
   getCommunityToken as vkGetCommunityToken,
   getLaunchParams as vkGetLaunchParams,
   uploadDoc as vkUploadDoc,
@@ -865,11 +866,19 @@ function refreshSendButtons() {
   });
 }
 
-/** Ключ сообщества: сначала messages+docs (нужен для вложения), затем только messages. */
+/** Ключ доступа: сначала пользовательский (любой пользователь), затем сообщества (админы). */
 async function getSendToken() {
-  let token = await vkGetCommunityToken('messages,docs');
+  // Сначала пробуем пользовательский токен — работает у любого пользователя внутри ВК
+  let token = await vkGetUserAuthToken('messages,docs,offline');
+  if (!token) token = await vkGetUserAuthToken('messages'); // fallback без docs
+  if (token) return { token, type: 'user' };
+
+  // Фоллбек: токен сообщества (только для админов группы)
+  token = await vkGetCommunityToken('messages,docs');
   if (!token) token = await vkGetCommunityToken('messages');
-  return token;
+  if (token) return { token, type: 'community' };
+
+  return null;
 }
 
 /**
@@ -896,24 +905,22 @@ async function runBroadcast(mode, only) {
 
   bs.sending = true;
   setSendButtonsDisabled(true);
-  setStatus('Запрашиваем доступ сообщества…');
+  setStatus('Запрашиваем доступ к сообщениям…');
 
-  let token = null;
+  let tokenInfo = null;
   try {
-    token = await getSendToken();
-  } catch (e) { token = null; }
+    tokenInfo = await getSendToken();
+  } catch (e) { tokenInfo = null; }
 
-  if (!token) {
+  if (!tokenInfo) {
     bs.sending = false;
     refreshSendButtons();
     if (broadcastState === bs) {
-      setStatus('Доступ сообщества не получен.');
+      setStatus('Доступ не получен.');
       await showDialog({
         title: 'Не удалось отправить',
-        text: 'Нужен ключ доступа сообщества. Он выдаётся, если:\n' +
-              '• вы администратор сообщества;\n' +
-              '• мини-приложение подключено к сообществу;\n' +
-              '• приложение запросило права на сообщения.\n\n' +
+        text: 'Нужно разрешить приложению доступ к сообщениям и документам.\n' +
+              'Нажмите «Отправить…» ещё раз и в появившемся окне ВК выберите «Разрешить».\n\n' +
               'Пока отправка недоступна — используйте «Копировать всё».',
         anchor: bs.anchor,
         buttons: [{ label: 'Понятно', primary: true, value: true }]
@@ -922,18 +929,22 @@ async function runBroadcast(mode, only) {
     return;
   }
 
+  const { token, type } = tokenInfo;
   const lp = await vkGetLaunchParams();
-  const groupId = lp && lp.vk_group_id;
+  // groupId нужен только для токена сообщества
+  const groupId = type === 'community' ? (lp && lp.vk_group_id) : null;
 
   let sent = 0;
   let fileSent = 0;
   let fileError = null;
   let msgError = null;
 
+  const senderLabel = type === 'community' ? 'сообщества' : 'вашего имени';
+
   for (let i = 0; i < targets.length; i++) {
     const it = targets[i];
     if (broadcastState === bs) {
-      setStatus('Отправка ' + (i + 1) + '/' + targets.length + ': ' + it.emp.name + '…');
+      setStatus('Отправка ' + (i + 1) + '/' + targets.length + ': ' + it.emp.name + ' (' + senderLabel + ')…');
     }
 
     let attachment = null;
