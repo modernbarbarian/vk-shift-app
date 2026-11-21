@@ -213,6 +213,137 @@ export function init(onConfig) {
 
 /* ---------- API ---------- */
 
+const API_VERSION = '5.199';
+
+/** Кэш launch-параметров (нужны vk_app_id / vk_group_id для работы с API). */
+let launchParamsCache = null;
+/** Кэш токена сообщества: один запрос разрешения на весь сеанс. */
+let communityTokenCache = null;
+
+/**
+ * Launch-параметры мини-приложения (vk_user_id, vk_app_id, vk_group_id, …).
+ * @returns {Promise<object|null>}
+ */
+export async function getLaunchParams() {
+  if (launchParamsCache) return launchParamsCache;
+  if (!isVK()) return null;
+  try {
+    const res = await send('VKWebAppGetLaunchParams', {}, 6000);
+    if (res && res.vk_app_id) launchParamsCache = res;
+    return launchParamsCache;
+  } catch (e) {
+    return null;
+  }
+}
+
+/**
+ * Ключ доступа сообщества (нужен для messages.send / docs.* от имени сообщества).
+ * Вызывается только у администратора сообщества, к которому подключено приложение.
+ * @param {string} scope например 'messages' или 'messages,docs'
+ * @returns {Promise<string|null>}
+ */
+export async function getCommunityToken(scope = 'messages') {
+  const lp = await getLaunchParams();
+  const appId = lp && lp.vk_app_id;
+  const groupId = lp && lp.vk_group_id;
+  if (!appId || !groupId) return null;
+
+  if (communityTokenCache && communityTokenCache.groupId === groupId) {
+    if (communityTokenCache.scopes.indexOf(scope) !== -1) return communityTokenCache.token;
+  }
+
+  try {
+    const res = await send('VKWebAppGetCommunityToken', {
+      app_id: appId,
+      group_id: groupId,
+      scope
+    }, 12000);
+    if (res && res.access_token) {
+      communityTokenCache = { groupId, token: res.access_token, scopes: [scope] };
+      return res.access_token;
+    }
+  } catch (e) { /* нет прав — вернём null, вызывающий код покажет подсказку */ }
+  return null;
+}
+
+/**
+ * Вызов метода VK API через клиент ВК (без CORS: запрос делает сам клиент).
+ * @returns {Promise<any>} результат метода
+ * @throws если VK API вернул error
+ */
+export async function callApi(method, params = {}, timeout = 12000) {
+  const res = await send(
+    'VKWebAppCallAPIMethod',
+    { method, params: Object.assign({}, params, { v: API_VERSION }) },
+    timeout
+  );
+
+  // Клиент оборачивает ответ в { response: … } — снимаем один уровень вложенности
+  let data = res;
+  if (data && typeof data === 'object' && !Array.isArray(data) &&
+      'response' in data && !('error' in data)) {
+    data = data.response;
+  }
+  if (data && typeof data === 'object' && data.error) {
+    const err = data.error;
+    throw new Error((err.error_msg || 'VK API error') + ' (code ' + err.error_code + ')');
+  }
+  return data;
+}
+
+/**
+ * Загрузка файла во ВК и получение строки-вложения `doc<owner_id>_<id>`.
+ * Используется, чтобы отправить сотруднику файл .ics вместе с сообщением.
+ * @returns {Promise<string>} строка для поля `attachment` метода messages.send
+ */
+export async function uploadDoc(fileText, filename, token, groupId) {
+  const base = { access_token: token };
+  if (groupId) base.group_id = groupId;
+
+  const srv = await callApi('docs.getUploadServer', base, 12000);
+  const uploadUrl = srv && srv.upload_url;
+  if (!uploadUrl) throw new Error('Не удалось получить адрес загрузки файла');
+
+  const fd = new FormData();
+  fd.append('file', new Blob([fileText], { type: 'text/calendar;charset=utf-8' }), filename);
+
+  const resp = await fetch(uploadUrl, { method: 'POST', body: fd, credentials: 'omit' });
+  if (!resp.ok) throw new Error('Ошибка загрузки файла (HTTP ' + resp.status + ')');
+
+  const saved = await resp.json();
+  if (!saved || saved.error || !saved.file) {
+    throw new Error((saved && saved.error && saved.error.error_msg) || 'Ошибка сохранения файла');
+  }
+
+  const res = await callApi('docs.save', Object.assign({}, base, {
+    file: saved.file,
+    title: filename
+  }), 12000);
+
+  const doc = res && (res.doc || (Array.isArray(res) && res[0] && res[0].doc));
+  if (!doc || !doc.id) throw new Error('Файл не сохранён во ВК');
+  return 'doc' + doc.owner_id + '_' + doc.id;
+}
+
+/**
+ * Отправка сообщения в личные сообщения от имени сообщества.
+ * @param {number} peerId id получателя (пользователя)
+ * @param {string} message текст
+ * @param {string|null} attachment строка вложения, например doc123_456
+ * @param {string} token ключ сообщества
+ */
+export async function sendMessage(peerId, message, attachment, token) {
+  const params = {
+    access_token: token,
+    peer_id: peerId,
+    message: String(message),
+    random_id: Math.floor(Date.now() % 1e9 * Math.random()) || 1
+  };
+  if (attachment) params.attachment = attachment;
+  const res = await callApi('messages.send', params, 12000);
+  return res;
+}
+
 /**
  * Список друзей пользователя.
  * Возвращает массив { id, first_name, last_name, photo_200 }.

@@ -32,47 +32,6 @@
       </div>
 
       <div class="card">
-        <div class="card__title">Добавить смену</div>
-        <form id="form-shift" class="form">
-          <div class="form__row">
-            <label class="form__label">Сотрудник</label>
-            <div class="input-wrap">
-              <input type="text" id="inp-employee" class="input" list="employees-list" placeholder="Имя сотрудника" />
-              <button type="button" class="btn-icon" id="btn-pick-employee" title="Выбрать из друзей ВК">👥</button>
-            </div>
-            <datalist id="employees-list"></datalist>
-            <div class="hint" id="hint-vk-friends"></div>
-          </div>
-
-          <div class="form__row">
-            <label class="form__label">Точка магазина</label>
-            <input type="text" id="inp-store" class="input" list="stores-list" placeholder="Название точки (запомнится)" />
-            <datalist id="stores-list"></datalist>
-          </div>
-
-          <div class="form__row grid-2">
-            <div>
-              <label class="form__label">Дата</label>
-              <input type="date" id="inp-date" class="input" />
-            </div>
-            <div>
-              <label class="form__label">Время</label>
-              <input type="time" id="inp-time" class="input" />
-            </div>
-          </div>
-
-          <div class="form__row">
-            <div>
-              <label class="form__label">Длительность (ч)</label>
-              <input type="number" id="inp-duration" class="input input--small" min="0.5" step="0.5" value="6" />
-            </div>
-          </div>
-
-          <button type="submit" class="btn btn--primary btn--full">Добавить смену</button>
-        </form>
-      </div>
-
-      <div class="card">
         <div class="card__title">График на неделю</div>
         <div id="list-week" class="shift-list"></div>
       </div>
@@ -89,8 +48,6 @@
       </div>
       <div id="list-stats" class="stats-list"></div>
     </section>
-
-    <button class="fab" id="btn-add-shift" title="Быстро перейти к форме">+</button>
 
     <!-- Оверлей и модальное окно -->
     <div class="overlay hidden" id="overlay"></div>
