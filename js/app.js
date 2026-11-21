@@ -726,6 +726,40 @@ function openBroadcast(anchor) {
   status.id = 'broadcast-status';
   body.appendChild(status);
 
+  // Диагностическая панель (показывает состояние токена и окружения)
+  const diag = document.createElement('div');
+  diag.className = 'broadcast-status';
+  diag.style.marginTop = '10px';
+  diag.style.fontSize = '11px';
+  diag.style.color = '#888';
+  diag.id = 'broadcast-diag';
+  body.appendChild(diag);
+
+  function refreshDiag() {
+    const lp = vkGetLaunchParams();
+    const appId = lp ? lp.vk_app_id : null;
+    const groupId = lp ? lp.vk_group_id : null;
+    let diagText = 'Внутри ВК: ' + (isVK() ? 'да' : 'нет') + '\n';
+    diagText += 'vk_app_id: ' + (appId || 'не найден') + '\n';
+    diagText += 'vk_group_id: ' + (groupId || 'не найден') + '\n';
+    if (!isVK()) {
+      diagText += '\nПриложение открыто не внутри ВК. Отправка сообщений невозможна.';
+    } else if (!appId) {
+      diagText += '\nLaunch-параметры не найдены. Откройте приложение как мини-приложение ВК.';
+    }
+    diag.textContent = diagText;
+  }
+  refreshDiag();
+
+  // Кнопка обновления диагностики
+  const diagBtn = document.createElement('button');
+  diagBtn.type = 'button';
+  diagBtn.className = 'btn btn--outline btn--small';
+  diagBtn.textContent = 'Обновить диагностику';
+  diagBtn.style.marginTop = '6px';
+  diagBtn.onclick = refreshDiag;
+  body.appendChild(diagBtn);
+
   const items = Object.values(byEmp).map(emp => {
     const shifts = emp.shifts.slice().sort((a, b) => a.time.localeCompare(b.time));
     const lines = shifts.map(s =>
