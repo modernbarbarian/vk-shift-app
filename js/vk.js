@@ -217,8 +217,6 @@ const API_VERSION = '5.199';
 
 /** Кэш launch-параметров (нужны vk_app_id / vk_group_id для работы с API). */
 let launchParamsCache = null;
-/** Кэш пользовательских токенов по scope. */
-const userTokenCache = new Map();
 
 /**
  * Launch-параметры мини-приложения (vk_user_id, vk_app_id, vk_group_id, …).
@@ -242,13 +240,11 @@ export async function getLaunchParams() {
  * @returns {Promise<string|null>}
  */
 export async function getUserAuthToken(scope = 'messages') {
+  if (!isVK()) return null;
+
   const lp = await getLaunchParams();
   const appId = lp && lp.vk_app_id;
   if (!appId) return null;
-
-  if (userTokenCache.has(scope)) return userTokenCache.get(scope);
-
-  if (!(await supports('VKWebAppGetAuthToken'))) return null;
 
   try {
     const res = await send('VKWebAppGetAuthToken', {
@@ -257,7 +253,6 @@ export async function getUserAuthToken(scope = 'messages') {
       result: true
     }, 12000);
     if (res && res.access_token) {
-      userTokenCache.set(scope, res.access_token);
       return res.access_token;
     }
   } catch (e) { /* пользователь не дал разрешения или метод не支持 */ }

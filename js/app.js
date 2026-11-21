@@ -867,6 +867,10 @@ function refreshSendButtons() {
 
 /** Ключ доступа: только пользовательский (любой пользователь внутри ВК). */
 async function getSendToken() {
+  if (!isVK()) {
+    console.error('getSendToken: приложение не запущено внутри ВК');
+    return null;
+  }
   let token = await vkGetUserAuthToken('messages');
   if (token) return { token, type: 'user' };
   return null;
