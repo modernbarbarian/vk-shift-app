@@ -234,6 +234,11 @@ export async function getLaunchParams() {
   }
 }
 
+/** Ручная установка launch-параметров (если VK не передаёт их автоматически). */
+export function setLaunchParams(params) {
+  launchParamsCache = params;
+}
+
 /**
  * Пользовательский ключ доступа (для отправки сообщений от своего имени).
  * @param {string} scope например 'messages'

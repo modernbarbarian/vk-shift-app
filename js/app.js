@@ -7,6 +7,7 @@ import {
   storageSet as vkStorageSet,
   getUserAuthToken as vkGetUserAuthToken,
   getLaunchParams as vkGetLaunchParams,
+  setLaunchParams as vkSetLaunchParams,
   uploadDoc as vkUploadDoc,
   sendMessage as vkSendMessage,
   isVK,
@@ -739,9 +740,14 @@ function openBroadcast(anchor) {
     const lp = vkGetLaunchParams();
     const appId = lp ? lp.vk_app_id : null;
     const groupId = lp ? lp.vk_group_id : null;
+    const userId = lp ? lp.vk_user_id : null;
+    const platform = lp ? lp.vk_platform : null;
     let diagText = 'Внутри ВК: ' + (isVK() ? 'да' : 'нет') + '\n';
+    diagText += 'URL: ' + window.location.href + '\n';
     diagText += 'vk_app_id: ' + (appId || 'не найден') + '\n';
     diagText += 'vk_group_id: ' + (groupId || 'не найден') + '\n';
+    diagText += 'vk_user_id: ' + (userId || 'не найден') + '\n';
+    diagText += 'vk_platform: ' + (platform || 'не найден') + '\n';
     if (!isVK()) {
       diagText += '\nПриложение открыто не внутри ВК. Отправка сообщений невозможна.';
     } else if (!appId) {
@@ -759,6 +765,25 @@ function openBroadcast(anchor) {
   diagBtn.style.marginTop = '6px';
   diagBtn.onclick = refreshDiag;
   body.appendChild(diagBtn);
+
+  // Ручной ввод vk_app_id (если VK не передаёт параметры автоматически)
+  const appIdWrap = document.createElement('div');
+  appIdWrap.style.marginTop = '8px';
+  appIdWrap.innerHTML =
+    '<label class="form__label" style="font-size:11px">Вручную указать ID приложения (vk_app_id):</label>' +
+    '<input type="text" id="diag-app-id" class="input" style="font-size:12px" placeholder="например 123456" />' +
+    '<button id="diag-apply-app-id" class="btn btn--primary btn--small" style="font-size:12px;margin-top:4px">Применить</button>';
+  body.appendChild(appIdWrap);
+
+  const diagAppIdInput = document.getElementById('diag-app-id');
+  const diagApplyBtn = document.getElementById('diag-apply-app-id');
+  diagApplyBtn.onclick = () => {
+    const manualId = diagAppIdInput.value.trim();
+    if (!manualId) { toast('Укажите ID приложения'); return; }
+    vkSetLaunchParams({ vk_app_id: parseInt(manualId), vk_group_id: null, vk_user_id: null, vk_platform: 'desktop' });
+    refreshDiag();
+    toast('ID приложения установлен: ' + manualId);
+  };
 
   const items = Object.values(byEmp).map(emp => {
     const shifts = emp.shifts.slice().sort((a, b) => a.time.localeCompare(b.time));
